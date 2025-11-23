@@ -30,15 +30,20 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
     <style>
-        /* Dark Mode Scrollbar */
+        /* Custom Scrollbar */
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.1); border-radius: 20px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.5); border-radius: 20px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(107, 114, 128, 0.8); }
         
         /* Animations */
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes width-expand { 0%, 100% { width: 0%; margin-left: 0; } 50% { width: 100%; margin-left: 0; } }
+        .animate-width { animation: width-expand 2s ease-in-out infinite; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Typography */
+        .prose strong { color: #111827; font-weight: 600; }
         
         /* Glassmorphism utilities */
         .glass-panel {
@@ -47,26 +52,19 @@
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-        .glass-panel-hover:hover {
-            background: rgba(40, 40, 40, 0.7);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
         
         body { background-color: #0f0f11; color: #e5e7eb; }
-        .neon-text { color: #ccff00; }
-        .neon-bg { background-color: #ccff00; color: #000; }
     </style>
 </head>
-<body class="font-sans overflow-hidden selection:bg-[#ccff00] selection:text-black">
+<body class="bg-[#f5f5f7] text-gray-800 font-sans overflow-hidden">
     <div id="root" class="h-screen overflow-y-auto"></div>
 
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect, useCallback } = React;
-        // FIX: Removed alias for Tooltip to avoid ReferenceError in JSX
-        // FIX: Added PieChart, Pie to destructuring
-        const { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } = Recharts;
+        // FIX: Removed alias for Tooltip so it matches the JSX usage
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } = Recharts;
 
-        // --- CONFIGURATION ---
+        // --- 1. CONFIGURATION ---
         const HARDCODED_CONFIG = {
             apiKey: "AIzaSyA26IAovNOtUSfxdRPaIHzoCzMrQCvuuCM",
             authDomain: "unplanned-cip-tracker.firebaseapp.com",
@@ -85,42 +83,11 @@
         const STORAGE_KEY_PIN = 'cip_tracker_pin';
         const STORAGE_KEY_BIOMETRIC = 'cip_tracker_biometric_enabled';
 
-        // --- COLORS ---
-        // Adjusted for Dark Mode
+        const MONTH_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];
+        // Neon Palette for general charts
         const CHART_COLORS = ['#ccff00', '#3b82f6', '#a855f7', '#ef4444', '#f97316', '#10b981']; 
 
-        // --- GLOBAL VARS ---
-        let db, auth, appInstance;
-
-        // --- FIREBASE INIT ---
-        const initFirebase = (config) => {
-            try {
-                const fullConfig = {
-                    apiKey: config.apiKey,
-                    authDomain: config.authDomain || `${config.projectId}.firebaseapp.com`,
-                    projectId: config.projectId,
-                    storageBucket: config.storageBucket || `${config.projectId}.appspot.com`,
-                    messagingSenderId: config.messagingSenderId,
-                    appId: config.appId,
-                    measurementId: config.measurementId
-                };
-                if (!firebase.apps.length) appInstance = firebase.initializeApp(fullConfig);
-                else appInstance = firebase.app(); 
-                auth = firebase.auth();
-                db = firebase.firestore();
-                return true;
-            } catch (e) { console.error("Firebase Init Error:", e); return false; }
-        };
-
-        let initialCloudState = false;
-        if (HARDCODED_CONFIG.apiKey && HARDCODED_CONFIG.projectId) {
-            initialCloudState = initFirebase(HARDCODED_CONFIG);
-        } else {
-            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);
-            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));
-        }
-
-        // --- ROBUST ICON WRAPPER ---
+        // --- 2. ICONS & WRAPPERS ---
         const IconWrapper = ({ name, size = 24, className, color = 'currentColor' }) => {
             const ref = useRef(null);
             useEffect(() => {
@@ -139,7 +106,7 @@
             return <span ref={ref} className="inline-flex items-center justify-center" style={{width: size, height: size}}></span>;
         };
 
-        // --- ICONS MAP ---
+        // Map icons
         const Icons = {
             LayoutDashboard: (p) => <IconWrapper name="layout-dashboard" {...p} />,
             FileSpreadsheet: (p) => <IconWrapper name="file-spreadsheet" {...p} />,
@@ -180,10 +147,10 @@
             Square: (p) => <IconWrapper name="square" {...p} />,
             Merge: (p) => <IconWrapper name="merge" {...p} />,
             ScanFace: (p) => <IconWrapper name="scan-face" {...p} />,
-            PieChart: (p) => <IconWrapper name="pie-chart" {...p} />, 
+            PieChart: (p) => <IconWrapper name="pie-chart" {...p} />,
         };
 
-        // --- HELPERS ---
+        // --- 3. HELPERS ---
         const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
         const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
         const formatDate = (dateString) => {
@@ -193,7 +160,37 @@
             return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         };
 
-        // --- UI COMPONENTS ---
+        // --- 5. FIREBASE SETUP ---
+        let db, auth, appInstance;
+        const initFirebase = (config) => {
+            try {
+                const fullConfig = {
+                    apiKey: config.apiKey,
+                    authDomain: config.authDomain || `${config.projectId}.firebaseapp.com`,
+                    projectId: config.projectId,
+                    storageBucket: config.storageBucket || `${config.projectId}.appspot.com`,
+                    messagingSenderId: config.messagingSenderId,
+                    appId: config.appId,
+                    measurementId: config.measurementId
+                };
+                if (!firebase.apps.length) appInstance = firebase.initializeApp(fullConfig);
+                else appInstance = firebase.app(); 
+                auth = firebase.auth();
+                db = firebase.firestore();
+                return true;
+            } catch (e) { console.error("Firebase Init Error:", e); return false; }
+        };
+
+        let initialCloudState = false;
+        if (HARDCODED_CONFIG.apiKey && HARDCODED_CONFIG.projectId) {
+            initialCloudState = initFirebase(HARDCODED_CONFIG);
+        } else {
+            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);
+            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));
+        }
+
+        // --- 6. UI COMPONENTS ---
+        
         const Card = ({ title, children, icon, className = "", action }) => (
             <div className={`glass-panel rounded-3xl p-5 flex flex-col transition-all duration-300 hover:shadow-lg hover:shadow-[#ccff00]/5 border border-gray-800 bg-[#18181b] ${className}`}>
                 <div className="flex justify-between items-start mb-4">
@@ -368,7 +365,6 @@
             const [showCloudSettings, setShowCloudSettings] = useState(false);
             const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO) || null);
 
-            // Import internal state
             const [isImporting, setIsImporting] = useState(false);
             const [importStep, setImportStep] = useState('');
             const [importError, setImportError] = useState(null);
@@ -376,7 +372,6 @@
             const [showPasteInput, setShowPasteInput] = useState(false);
             const [pastedData, setPastedData] = useState('');
 
-            // Deletion state
             const [deletePassword, setDeletePassword] = useState('');
             const [deleteError, setDeleteError] = useState('');
             const [deleteStep, setDeleteStep] = useState('idle'); 
@@ -408,7 +403,6 @@
             const UNKNOWN_LINE = { color: '#9ca3af', costPerHr: 0, packsPerHr: 0 };
             const SHIFTS = ['All Shifts', 'A Shift', 'B Shift', 'C Shift', 'D Shift'];
 
-            // Auth & Sync
             useEffect(() => { if (isCloudConnected && auth) return auth.onAuthStateChanged(setUser); }, [isCloudConnected]);
             useEffect(() => {
                 if (!user || !isCloudConnected || !db) return;
@@ -561,7 +555,7 @@
                 // Create merged object
                 const totalDuration = eventsToMerge.reduce((acc, curr) => acc + parseFloat(curr.duration || 0), 0).toFixed(2);
                 const combinedNotes = eventsToMerge.map(e => e.notes).filter(Boolean).join('\n---\n');
-                const combinedReasons = [...new Set(eventsToMerge.map(e => e.reason))].join(' / ');
+                const combinedReasons = [...new Set(eventsToMerge.map(e => e.reason))].join(' + ');
                 const allPhotos = eventsToMerge.flatMap(e => e.photos || []);
 
                 const newEvent = {
@@ -674,8 +668,7 @@
                         }
                     }
                 });
-                // Safe map: ensure months array exists before map
-                return Object.keys(months).sort().map(year => ({ year: year, data: (months[year] || []).sort((a,b) => a.monthIndex - b.monthIndex) }));
+                return Object.keys(months).sort().map(year => ({ year: year, data: months[year].sort((a,b) => a.monthIndex - b.monthIndex) }));
             }, [filteredAndReasonData, dateRange]);
 
             // --- RENDER ---
@@ -926,7 +919,7 @@
                                         <button onClick={toggleBiometric} className={`text-sm flex items-center gap-2 ${useBiometric ? 'text-[#ccff00]' : 'text-gray-500'}`}>
                                             <Icons.ScanFace size={16}/> Biometric Unlock (FaceID)
                                         </button>
-                                        <button onClick={clearSecurity} className="text-xs text-red-500 underline">Disable Security</button>
+                                        {/* Removed Disable Button */}
                                     </div>
                                 </div>
 
