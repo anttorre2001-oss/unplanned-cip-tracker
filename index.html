@@ -85,7 +85,7 @@
         const MONTH_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];
 
         // --- 2. ICONS & WRAPPERS ---
-        const IconWrapper = ({ name, size = 20, className, color = 'currentColor' }) => {
+        const IconWrapper = ({ name, size = 20, className }) => {
             const ref = useRef(null);
             useEffect(() => {
                 if (ref.current && window.lucide) {
@@ -93,9 +93,9 @@
                     i.setAttribute('data-lucide', name);
                     ref.current.innerHTML = '';
                     ref.current.appendChild(i);
-                    window.lucide.createIcons({ root: ref.current, nameAttr: 'data-lucide', attrs: { width: size, height: size, class: className, stroke: color } });
+                    window.lucide.createIcons({ root: ref.current, nameAttr: 'data-lucide', attrs: { width: size, height: size, class: className } });
                 }
-            }, [name, size, className, color]);
+            }, [name, size, className]);
             return <span ref={ref} className="inline-flex items-center justify-center"></span>;
         };
 
@@ -110,7 +110,6 @@
         };
 
         // --- 4. UI COMPONENTS ---
-        
         const FilterDropdown = ({ label, options, value, onChange, iconName }) => {
             const [isOpen, setIsOpen] = useState(false);
             const [searchTerm, setSearchTerm] = useState('');
@@ -126,7 +125,6 @@
                 return () => document.removeEventListener("mousedown", handleClickOutside);
             }, [wrapperRef]);
 
-            // FIX: Ensure options is always an array
             const safeOptions = Array.isArray(options) ? options : [];
             const filteredOptions = safeOptions.filter(opt => (opt || '').toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -191,7 +189,7 @@
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-                    <div className={`bg-[#18181b] rounded-2xl shadow-2xl w-full ${maxWidth} max-h-[90vh] overflow-y-auto border border-gray-700 text-gray-200`}>
+                    <div className={`bg-[#18181b] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto border border-gray-700 text-gray-200`}>
                         <div className="flex justify-between items-center p-6 border-b border-gray-700 sticky top-0 bg-[#18181b] z-10">
                             <h2 className="text-xl font-bold text-white">{title}</h2>
                             <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded hover:bg-gray-700"><IconWrapper name="x" size={24} /></button>
@@ -355,18 +353,26 @@
                         const date = new Date(d.date);
                         return date.getMonth() === i && date.getFullYear() === year;
                     });
+                    
                     if(mData.length === 0) {
                         months.push({ name: new Date(year,i).toLocaleDateString('en-US',{month:'short'}), cost: 0, reason: '' });
                         continue;
                     }
+                    
                     let maxEvent = null;
                     let maxCost = 0;
+                    
                     mData.forEach(d => {
                          const cfg = LINE_CONFIG[d.line] || UNKNOWN_LINE;
                          const c = (parseFloat(d.duration)||0) * cfg.costPerHr;
                          if(c > maxCost) { maxCost = c; maxEvent = d; }
                     });
-                    months.push({ name: new Date(year,i).toLocaleDateString('en-US',{month:'short'}), cost: maxCost, reason: maxEvent ? maxEvent.reason : '' });
+                    
+                    months.push({
+                        name: new Date(year,i).toLocaleDateString('en-US',{month:'short'}),
+                        cost: maxCost,
+                        reason: maxEvent ? maxEvent.reason : ''
+                    });
                 }
                 return months;
             }, [data, dateRange]);
@@ -407,16 +413,51 @@
                  return Object.keys(years).sort().map(y => ({ year: y, data: years[y].sort((a,b)=>a.index-b.index) }));
             }, [filteredData, dateRange]);
 
-            // Handlers
+            // Handlers (Condensed for space)
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };
             
             const processImport = async (name, txt) => {
                 setIsImporting(true); setImportProgress(0); setShowImportManager(false);
                 // Mock import for visual - in real use, restore full parsing logic here
-                setTimeout(() => { setIsImporting(false); alert("Import logic ready"); }, 1000);
+                setTimeout(() => { setIsImporting(false); alert("Import simulated (use full logic in prod)"); }, 1000);
+            };
+            
+            // --- FIXED MERGE LOGIC ---
+            const handleMergeEvents = async () => { 
+                if(eventLogSelection.size < 2 || !confirm("Merge selected?")) return; 
+                
+                // Get actual items
+                const selected = data.filter(e => eventLogSelection.has(e.id)).sort((a,b) => new Date(b.date) - new Date(a.date));
+                
+                // Calculate totals
+                const totalDur = selected.reduce((sum, e) => sum + parseFloat(e.duration||0), 0).toFixed(2);
+                const combinedNotes = selected.map(e => e.notes).filter(Boolean).join('\n---\n');
+                const combinedReasons = [...new Set(selected.map(e => e.reason))].join(' + ');
+                const allPhotos = selected.flatMap(e => e.photos || []);
+
+                const mergedEvent = { 
+                    ...selected[0], 
+                    id: isCloudConnected ? null : Date.now().toString(), 
+                    duration: totalDur, 
+                    reason: combinedReasons, 
+                    notes: `MERGED:\n${combinedNotes}`,
+                    photos: allPhotos
+                };
+                
+                if(isCloudConnected && user) {
+                    const batch = db.batch();
+                    const ref = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
+                    selected.forEach(e => batch.delete(ref.doc(e.id)));
+                    const newDoc = ref.doc();
+                    batch.set(newDoc, {...mergedEvent, id: newDoc.id});
+                    await batch.commit();
+                } else {
+                    const remaining = data.filter(e => !eventLogSelection.has(e.id));
+                    setData([mergedEvent, ...remaining]);
+                }
+                setEventLogSelection(new Set());
             };
 
-            const handleMergeEvents = async () => { if(eventLogSelection.size < 2 || !confirm("Merge selected?")) return; setEventLogSelection(new Set()); };
             const toggleEventSelection = (id) => { const n = new Set(eventLogSelection); if(n.has(id)) n.delete(id); else n.add(id); setEventLogSelection(n); };
             const toggleAllEvents = () => { if(eventLogSelection.size === filteredData.length) setEventLogSelection(new Set()); else setEventLogSelection(new Set(filteredData.map(d=>d.id))); };
 
@@ -424,42 +465,10 @@
             const handlePasteProcess = () => { if(!pastedData.trim()) return; processImport('Clipboard', pastedData); };
             const handleLogoUpload = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => { const base64 = reader.result; setAppLogo(base64); localStorage.setItem(STORAGE_KEY_LOGO, base64); }; reader.readAsDataURL(file); } };
             
-            // FIX: Add note handler
-            const handleAddNote = (id, val) => { 
-                setData(prev => prev.map(i => i.id === id ? {...i, notes: val} : i)); 
-                setSelectedEvent(p => ({...p, notes: val})); 
-                if(user && isCloudConnected) db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({notes: val}); 
-            };
-
-            // FIX: Add photo handlers
+            const handleAddNote = (id, val) => { setData(prev => prev.map(i => i.id === id ? {...i, notes: val} : i)); setSelectedEvent(p => ({...p, notes: val})); if(user && isCloudConnected) db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({notes: val}); };
+            const handleDeletePhoto = async (id, photoUrl) => { const eventItem = data.find(i => i.id === id); if(!eventItem) return; const updatedPhotos = (eventItem.photos || []).filter(p => p !== photoUrl); const newData = data.map(item => item.id === id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if (selectedImage === photoUrl) setSelectedImage(updatedPhotos.length > 0 ? updatedPhotos[0] : null); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({ photos: updatedPhotos }); } };
             const handleAddPhotoClick = () => photoInputRef.current.click();
-            const handlePhotoChange = (event) => { 
-                if (!selectedEvent) return; 
-                const file = event.target.files[0]; 
-                if (!file) return; 
-                const reader = new FileReader(); 
-                reader.onloadend = async () => { 
-                    const newPhotoUrl = reader.result; 
-                    const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl];
-                    const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); 
-                    setData(newData); 
-                    setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); 
-                    if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); 
-                    if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } 
-                }; 
-                reader.readAsDataURL(file); event.target.value = ''; 
-            };
-            const handleDeletePhoto = async (id, photoUrl) => { 
-                const eventItem = data.find(i => i.id === id); 
-                if(!eventItem) return; 
-                const updatedPhotos = (eventItem.photos || []).filter(p => p !== photoUrl); 
-                const newData = data.map(item => item.id === id ? { ...item, photos: updatedPhotos } : item); 
-                setData(newData); 
-                setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); 
-                if (selectedImage === photoUrl) setSelectedImage(updatedPhotos.length > 0 ? updatedPhotos[0] : null); 
-                if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({ photos: updatedPhotos }); } 
-            };
-
+            const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };
             const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('confirm'); };
             const confirmMultiDelete = async () => { setIsDeleting(true); setTimeout(() => { setData(prev=>prev.filter(i=>!selectedFileIds.has(i.sourceFileId))); setImportedFiles(prev=>prev.filter(f=>!selectedFileIds.has(f.id))); setIsDeleting(false); setDeleteStep('idle'); setSelectedFileIds(new Set()); }, 1000); };
             const handleGoogleLogin = async () => { if(window.location.protocol === 'file:') { alert("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { alert(e.message); } };
@@ -470,6 +479,7 @@
             const handleSaveConfig = () => { let config = { apiKey: apiKeyInput.trim(), authDomain: `${projectIdInput.trim()}.firebaseapp.com`, projectId: projectIdInput.trim() }; if(initFirebase(config)) { localStorage.setItem(STORAGE_KEY_FIREBASE_CONFIG, JSON.stringify(config)); setIsCloudConnected(true); alert("Connected!"); } else alert("Failed"); };
             const toggleFileSelection = (id) => { const newSet = new Set(selectedFileIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFileIds(newSet); };
             const toggleAllFiles = () => { if (selectedFileIds.size === importedFiles.length) setSelectedFileIds(new Set()); else setSelectedFileIds(new Set(importedFiles.map(f => f.id))); };
+
 
             return (
                 <div className="min-h-screen bg-[#0f0f11] text-gray-200 font-sans flex flex-col p-4 md:p-6 gap-6">
@@ -510,7 +520,6 @@
                              <FilterDropdown label="Shift" value={activeShift} options={SHIFTS} onChange={setActiveShift} iconName="clock"/>
                              <FilterDropdown label="Product" value={activeProduct} options={PRODUCTS} onChange={setActiveProduct} iconName="package"/>
                          </div>
-                         
                          <div className="flex gap-3 items-center bg-[#18181b] p-1.5 rounded-2xl border border-gray-800">
                               <div className="px-3 text-gray-500"><IconWrapper name="calendar" size={16}/></div>
                               <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-transparent text-white text-xs font-mono outline-none w-24"/>
@@ -521,6 +530,8 @@
 
                     {/* DASHBOARD GRID */}
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 min-h-0">
+                        
+                        {/* COL 1: STATS & IMPACT */}
                         <div className="xl:col-span-1 flex flex-col gap-6">
                             <Card title="Total Impact" iconName="dollar-sign" className="bg-gradient-to-br from-[#1e1e24] to-[#18181b] justify-center min-h-[150px]">
                                  <h2 className="text-4xl font-bold text-white mb-2">{formatCurrency(metrics.totalCost)}</h2>
@@ -550,9 +561,12 @@
                             </Card>
                         </div>
 
+                        {/* COL 2 & 3 */}
                         <div className="xl:col-span-3 grid grid-rows-[auto_1fr] gap-6">
+                            
+                            {/* Row 1: Max Loss Chart & Event Log Side-by-Side */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
-                                <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full overflow-hidden">
+                                <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={monthlyMaxLoss}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)"/>
@@ -560,6 +574,7 @@
                                             <Tooltip 
                                                 cursor={{fill:'rgba(255,255,255,0.05)'}}
                                                 contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}
+                                                itemStyle={{ color: '#fff' }} // Ensure white font for money
                                                 formatter={(v, n, props) => [formatCurrency(v), props.payload.reason]}
                                             />
                                             <Bar dataKey="cost" radius={[4,4,0,0]}>
@@ -572,7 +587,7 @@
                                 <Card 
                                     title={`Event Log (${filteredData.length})`} 
                                     iconName="list" 
-                                    className="h-full overflow-hidden"
+                                    className="h-full"
                                     action={eventLogSelection.size > 1 && <button onClick={handleMergeEvents} className="px-3 py-1 bg-[#ccff00] text-black rounded-lg text-xs font-bold hover:bg-[#b3e600]">Merge ({eventLogSelection.size})</button>}
                                 >
                                     <div className="h-full flex flex-col">
@@ -631,6 +646,7 @@
                                                          <Tooltip 
                                                              cursor={{fill:'rgba(255,255,255,0.05)'}}
                                                              contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}
+                                                             itemStyle={{ color: '#fff' }} 
                                                              formatter={v => [formatCurrency(v), 'Cost']}
                                                          />
                                                          <Bar dataKey="cost" radius={[4,4,0,0]}>
@@ -650,14 +666,27 @@
                     
                     {showCloudSettings && <Modal isOpen={showCloudSettings} onClose={() => setShowCloudSettings(false)} title="Settings"><div className="text-gray-400 text-sm text-center">Settings panel content...</div><div className="pt-4 text-center"><button onClick={handleClearConfig} className="text-xs text-red-500 hover:text-red-400 underline">Reset Cloud</button></div></Modal>}
                     
-                    {/* EVENT DETAILS MODAL WITH NOTES/PHOTOS */}
+                    {/* EVENT DETAILS MODAL */}
                     {selectedEvent && (
                         <Modal isOpen={!!selectedEvent} onClose={() => setSelectedEvent(null)} title="Event Details">
                              <div className="grid grid-cols-2 gap-4 text-sm text-gray-300 mb-4">
+                                {/* Top Row Cards */}
+                                <div className="col-span-1 bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
+                                    <span className="block text-xs text-red-400 font-bold uppercase">Financial Loss</span>
+                                    <span className="text-lg font-mono text-red-500">{formatCurrency(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].costPerHr)}</span>
+                                </div>
+                                <div className="col-span-1 bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg">
+                                    <span className="block text-xs text-orange-400 font-bold uppercase">Packs Lost</span>
+                                    <span className="text-lg font-mono text-orange-500">{formatNumber(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].packsPerHr)}</span>
+                                </div>
+
+                                {/* Details Grid */}
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Line</span>{selectedEvent.line}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Date</span>{formatDate(selectedEvent.date)}</div>
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Shift</span>{selectedEvent.shift}</div>
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Duration</span>{selectedEvent.duration}h</div>
                                 <div className="col-span-2 bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Reason</span>{selectedEvent.reason}</div>
-                                <div className="col-span-2 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30"><span className="block text-xs text-blue-400">Product</span>{selectedEvent.product}</div>
+                                <div className="col-span-2 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30"><span className="block text-xs text-blue-400">Product</span>{selectedEvent.product || 'N/A'}</div>
                              </div>
                              
                              {/* Notes Section */}
@@ -736,6 +765,7 @@
                             {selectedFileIds.size > 0 && <div className="mt-4 text-right"><button onClick={initiateMultiDelete} className="text-xs text-red-500 hover:text-red-400 underline">Delete Selected</button></div>}
                         </Modal>
                     )}
+                    
                 </div>
             );
         }
