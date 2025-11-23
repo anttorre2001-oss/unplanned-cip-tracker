@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unplanned CIP Tracker</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Prop-Types -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.292.0"></script>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+    <style>
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.5); border-radius: 20px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(107, 114, 128, 0.8); }
+        
+        /* Animations */
+        @keyframes width-expand { 0%, 100% { width: 0%; margin-left: 0; } 50% { width: 100%; margin-left: 0; } }
+        .animate-width { animation: width-expand 2s ease-in-out infinite; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Typography */
+        .prose strong { color: #111827; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-[#f5f5f7] text-gray-800 font-sans overflow-hidden">
+    <div id="root" class="h-screen overflow-y-auto"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef, useEffect, useCallback } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, ResponsiveContainer, Cell } = Recharts;
+
+        // --- 1. CONFIGURATION ---
+        const HARDCODED_CONFIG = {
+            apiKey: "AIzaSyA26IAovNOtUSfxdRPaIHzoCzMrQCvuuCM",
+            authDomain: "unplanned-cip-tracker.firebaseapp.com",
+            projectId: "unplanned-cip-tracker",
+            storageBucket: "unplanned-cip-tracker.firebasestorage.app",
+            messagingSenderId: "187006943396",
+            appId: "1:187006943396:web:1eb7932c09b4c5a384e631",
+            measurementId: "G-ZXRKJNGLT2"
+        };
+
+        const GLOBAL_APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'cip-tracker-v1';
+        const STORAGE_KEY_FIREBASE_CONFIG = 'cip_tracker_firebase_config';
+        const STORAGE_KEY_DATA = 'cip_tracker_data';
+        const STORAGE_KEY_FILES = 'cip_tracker_files';
+        const STORAGE_KEY_LOGO = 'cip_tracker_logo'; 
+
+        const MONTH_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];
+
+        // --- 2. ICONS & WRAPPERS ---
+        const IconWrapper = ({ name, size = 24, className, color = 'currentColor' }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (ref.current && window.lucide) {
+                    const i = document.createElement('i');
+                    i.setAttribute('data-lucide', name);
+                    ref.current.innerHTML = '';
+                    ref.current.appendChild(i);
+                    window.lucide.createIcons({
+                        root: ref.current,
+                        nameAttr: 'data-lucide',
+                        attrs: { width: size, height: size, class: className, stroke: color }
+                    });
+                }
+            }, [name, size, className, color]);
+            return <span ref={ref} className="inline-flex items-center justify-center" style={{width: size, height: size}}></span>;
+        };
+
+        const Icons = {
+            LayoutDashboard: (p) => <IconWrapper name="layout-dashboard" {...p} />,
+            FileSpreadsheet: (p) => <IconWrapper name="file-spreadsheet" {...p} />,
+            Calendar: (p) => <IconWrapper name="calendar" {...p} />,
+            Search: (p) => <IconWrapper name="search" {...p} />,
+            AlertTriangle: (p) => <IconWrapper name="alert-triangle" {...p} />,
+            TrendingUp: (p) => <IconWrapper name="trending-up" {...p} />,
+            DollarSign: (p) => <IconWrapper name="dollar-sign" {...p} />,
+            Package: (p) => <IconWrapper name="package" {...p} />,
+            Clock: (p) => <IconWrapper name="clock" {...p} />,
+            ChevronRight: (p) => <IconWrapper name="chevron-right" {...p} />,
+            Plus: (p) => <IconWrapper name="plus" {...p} />,
+            ImageIcon: (p) => <IconWrapper name="image" {...p} />,
+            X: (p) => <IconWrapper name="x" {...p} />,
+            PlayCircle: (p) => <IconWrapper name="play-circle" {...p} />,
+            Cpu: (p) => <IconWrapper name="cpu" {...p} />,
+            Camera: (p) => <IconWrapper name="camera" {...p} />,
+            Trash2: (p) => <IconWrapper name="trash-2" {...p} />,
+            Zap: (p) => <IconWrapper name="zap" {...p} />,
+            Lock: (p) => <IconWrapper name="lock" {...p} />,
+            FileText: (p) => <IconWrapper name="file-text" {...p} />,
+            CheckCircle: (p) => <IconWrapper name="check-circle" {...p} />,
+            AlertCircle: (p) => <IconWrapper name="alert-circle" {...p} />,
+            Clipboard: (p) => <IconWrapper name="clipboard" {...p} />,
+            List: (p) => <IconWrapper name="list" {...p} />,
+            Cloud: (p) => <IconWrapper name="cloud" {...p} />,
+            CloudOff: (p) => <IconWrapper name="cloud-off" {...p} />,
+            Settings: (p) => <IconWrapper name="settings" {...p} />,
+            LogOut: (p) => <IconWrapper name="log-out" {...p} />,
+            Chrome: (p) => <IconWrapper name="chrome" {...p} />,
+            Info: (p) => <IconWrapper name="info" {...p} />,
+            Download: (p) => <IconWrapper name="download" {...p} />,
+            Upload: (p) => <IconWrapper name="upload" {...p} />,
+            Maximize2: (p) => <IconWrapper name="maximize-2" {...p} />,
+            Minimize2: (p) => <IconWrapper name="minimize-2" {...p} />,
+            CheckSquare: (p) => <IconWrapper name="check-square" {...p} />,
+            Square: (p) => <IconWrapper name="square" {...p} />,
+            Merge: (p) => <IconWrapper name="merge" {...p} />,
+        };
+
+        // --- 3. HELPERS ---
+        const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
+        const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+        const formatDate = (dateString) => {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString; 
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+        };
+
+        // --- 5. FIREBASE SETUP ---
+        let db, auth, appInstance;
+        const initFirebase = (config) => {
+            try {
+                const fullConfig = {
+                    apiKey: config.apiKey,
+                    authDomain: config.authDomain || `${config.projectId}.firebaseapp.com`,
+                    projectId: config.projectId,
+                    storageBucket: config.storageBucket || `${config.projectId}.appspot.com`,
+                    messagingSenderId: config.messagingSenderId,
+                    appId: config.appId,
+                    measurementId: config.measurementId
+                };
+                if (!firebase.apps.length) appInstance = firebase.initializeApp(fullConfig);
+                else appInstance = firebase.app(); 
+                auth = firebase.auth();
+                db = firebase.firestore();
+                return true;
+            } catch (e) { console.error("Firebase Init Error:", e); return false; }
+        };
+
+        let initialCloudState = false;
+        if (HARDCODED_CONFIG.apiKey && HARDCODED_CONFIG.projectId) {
+            initialCloudState = initFirebase(HARDCODED_CONFIG);
+        } else {
+            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);
+            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));
+        }
+
+        // --- 6. UI COMPONENTS ---
+        const DashboardWidget = ({ id, title, children, expandedId, setExpandedId, icon, colorClass = "text-gray-900", className = "" }) => {
+            const isExpanded = expandedId === id;
+            const containerClasses = isExpanded 
+                ? "fixed inset-4 z-40 bg-white rounded-3xl shadow-2xl flex flex-col transition-all duration-300 border border-gray-200" 
+                : `relative bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col transition-all duration-300 hover:shadow-md ${className}`;
+
+            return (
+                <div className={containerClasses}>
+                    <div className={`flex justify-between items-center mb-4 cursor-pointer group ${isExpanded ? 'p-6 border-b border-gray-100' : ''}`} onClick={() => setExpandedId && setExpandedId(isExpanded ? null : id)}>
+                        <div className="flex items-center gap-3">
+                            {icon && <div className={`transition-transform group-hover:scale-110 ${colorClass}`}>{icon}</div>}
+                            <h3 className={`text-lg font-bold group-hover:text-blue-600 transition-colors ${colorClass}`}>{title}</h3>
+                        </div>
+                        {setExpandedId && (
+                            <button className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors bg-gray-50">
+                                {isExpanded ? <Icons.Minimize2 size={20}/> : <Icons.Maximize2 size={20}/>}
+                            </button>
+                        )}
+                    </div>
+                    <div className={`flex-1 min-h-0 relative ${isExpanded ? 'p-6' : ''}`}>{children}</div>
+                </div>
+            );
+        };
+
+        const SidePanel = ({ isOpen, onClose, title, children }) => {
+            return (
+                <>
+                    <div className={`fixed inset-0 z-50 bg-black/20 backdrop-blur-[2px] transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={onClose}/>
+                    <div className={`fixed top-2 bottom-2 right-2 w-[480px] max-w-[90vw] bg-white rounded-2xl shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col overflow-hidden border border-gray-100 ${isOpen ? 'translate-x-0' : 'translate-x-[110%]'}`}>
+                        <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/80 backdrop-blur-sm sticky top-0 z-10">
+                             <h2 className="font-bold text-lg text-gray-900">{title}</h2>
+                             <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-800 hover:bg-gray-200 rounded-full transition-colors"><Icons.X size={20}/></button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">{children}</div>
+                    </div>
+                </>
+            )
+        };
+
+        const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-3xl" }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4 animate-[fadeIn_0.2s_ease-in-out]">
+                    <div className={`bg-white rounded-2xl shadow-2xl w-full ${maxWidth} max-h-[90vh] overflow-y-auto border border-gray-100`}>
+                        <div className="flex justify-between items-center p-6 border-b border-gray-100">
+                            <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded hover:bg-gray-100"><Icons.X size={24} /></button>
+                        </div>
+                        <div className="p-6 text-gray-600">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 7. MAIN APP ---
+        function UnplannedCIPTracker() {
+            const [user, setUser] = useState(null);
+            const [isCloudConnected, setIsCloudConnected] = useState(initialCloudState);
+            
+            // Updated Active Tab Default to 'All Lines' if desired, or keep 'Line A'
+            const [activeTab, setActiveTab] = useState('Line A'); 
+            const [data, setData] = useState([]);
+            const [importedFiles, setImportedFiles] = useState([]); 
+            const [searchTerm, setSearchTerm] = useState('');
+            const [dateRange, setDateRange] = useState({ start: '2023-01-01', end: new Date().toISOString().split('T')[0] });
+            
+            const [expandedWidget, setExpandedWidget] = useState(null);
+            const [selectedEvent, setSelectedEvent] = useState(null);
+            const [selectedReason, setSelectedReason] = useState(null);
+            
+            const [showImportManager, setShowImportManager] = useState(false);
+            const [showCloudSettings, setShowCloudSettings] = useState(false);
+            
+            const [isImporting, setIsImporting] = useState(false);
+            const [importStep, setImportStep] = useState('');
+            const [importError, setImportError] = useState(null);
+            const [importProgress, setImportProgress] = useState(0);
+            const [showPasteInput, setShowPasteInput] = useState(false);
+            const [pastedData, setPastedData] = useState('');
+            
+            const fileInputRef = useRef(null);
+            const photoInputRef = useRef(null);
+            const backupInputRef = useRef(null);
+            const logoInputRef = useRef(null);
+            const [selectedImage, setSelectedImage] = useState(null);
+
+            const [fileToDelete, setFileToDelete] = useState(null);
+            const [selectedFileIds, setSelectedFileIds] = useState(new Set());
+            const [deletePassword, setDeletePassword] = useState('');
+            const [deleteError, setDeleteError] = useState('');
+            const [deleteStep, setDeleteStep] = useState('idle'); 
+            const [deleteProgress, setDeleteProgress] = useState(0);
+            const [isDeleting, setIsDeleting] = useState(false);
+            
+            const [setupMode, setSetupMode] = useState('simple');
+            const [projectIdInput, setProjectIdInput] = useState('');
+            const [apiKeyInput, setApiKeyInput] = useState('');
+            const [firebaseConfigInput, setFirebaseConfigInput] = useState('');
+            const [authError, setAuthError] = useState('');
+            const [authErrorHelp, setAuthErrorHelp] = useState('');
+
+            const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO) || null);
+
+            // MERGE STATE
+            const [eventLogSelection, setEventLogSelection] = useState(new Set());
+
+            const LINE_CONFIG = {
+                'Line A': { color: '#3b82f6', costPerHr: 1003.50, packsPerHr: 15000 },
+                'Line B': { color: '#06b6d4', costPerHr: 1003.50, packsPerHr: 15000 },
+                'Line C': { color: '#f97316', costPerHr: 1299.33, packsPerHr: 6000 },
+                'Line D': { color: '#ef4444', costPerHr: 1299.33, packsPerHr: 6000 },
+            };
+            const UNKNOWN_LINE = { color: '#9ca3af', costPerHr: 0, packsPerHr: 0 };
+            const SHIFTS = ['All Shifts', 'A Shift', 'B Shift', 'C Shift', 'D Shift'];
+            const [activeShift, setActiveShift] = useState('All Shifts');
+
+            // Auth & Sync
+            useEffect(() => { if (isCloudConnected && auth) return auth.onAuthStateChanged(setUser); }, [isCloudConnected]);
+            useEffect(() => {
+                if (!user || !isCloudConnected || !db) return;
+                const unsubEvents = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').onSnapshot(snap => setData(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                const unsubFiles = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').orderBy('date', 'desc').onSnapshot(snap => setImportedFiles(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                return () => { unsubEvents(); unsubFiles(); };
+            }, [user, isCloudConnected]);
+
+            // Import Logic
+            const parseRawData = (rawData, sourceName) => {
+                let rows = rawData.trim().split(/\r\n|\n|\r/);
+                if (rows.length < 2) return { entries: [], fileId: Date.now().toString() };
+                const headers = rows[0].split('\t').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+                let problemIdx = headers.findIndex(h => h.includes('problemtypename'));
+                if(problemIdx === -1) problemIdx = headers.findIndex(h => h.includes('reason') || h.includes('type'));
+                const colMap = {
+                    loc: headers.findIndex(h => h.includes('locationname')), date: headers.findIndex(h => h.includes('createddate')),
+                    prob: problemIdx, hrs: headers.findIndex(h => h.includes('sumofhours') || h.includes('hours')),
+                    run: headers.findIndex(h => h.includes('runname')), shift: headers.findIndex(h => h.includes('shiftname'))
+                };
+                const parsed = [];
+                const fileId = Date.now().toString();
+                const detectLine = (locationName, siteName = '') => {
+                    const searchText = `${locationName} ${siteName}`.toLowerCase();
+                    if (searchText.match(/line\s*a/)) return 'Line A';
+                    if (searchText.match(/line\s*b/)) return 'Line B';
+                    if (searchText.match(/line\s*c/)) return 'Line C';
+                    if (searchText.match(/line\s*d/)) return 'Line D';
+                    if (searchText.match(/ln\.?\s*a/)) return 'Line A';
+                    if (searchText.match(/ln\.?\s*b/)) return 'Line B';
+                    if (searchText.match(/ln\.?\s*c/)) return 'Line C';
+                    if (searchText.match(/ln\.?\s*d/)) return 'Line D';
+                    if (searchText.match(/[\s-]a$/) || searchText.includes(' a ')) return 'Line A';
+                    if (searchText.match(/[\s-]b$/) || searchText.includes(' b ')) return 'Line B';
+                    if (searchText.match(/[\s-]c$/) || searchText.includes(' c ')) return 'Line C';
+                    if (searchText.match(/[\s-]d$/) || searchText.includes(' d ')) return 'Line D';
+                    return 'Unknown';
+                };
+                const detectShift = (shiftRaw) => {
+                    if (!shiftRaw) return 'Unknown';
+                    const s = shiftRaw.toLowerCase();
+                    if (s.includes('a shift') || s.includes('team a') || s === 'a' || s.match(/\ba\b/) || s.includes('modern family')) return 'A Shift';
+                    if (s.includes('b shift') || s.includes('team b') || s === 'b' || s.match(/\bb\b/)) return 'B Shift';
+                    if (s.includes('c shift') || s.includes('team c') || s === 'c' || s.match(/\bc\b/)) return 'C Shift';
+                    if (s.includes('d shift') || s.includes('team d') || s === 'd' || s.match(/\bd\b/)) return 'D Shift';
+                    return shiftRaw; 
+                };
+                for(let i=1; i<rows.length; i++){
+                    const cells = rows[i].split('\t'); if(cells.length < 2) continue;
+                    const locRaw = (colMap.loc > -1 ? cells[colMap.loc] : '') || '';
+                    const dateRaw = (colMap.date > -1 ? cells[colMap.date] : '') || new Date().toISOString().split('T')[0];
+                    const reasonRaw = (colMap.prob > -1 ? cells[colMap.prob] : '') || 'Unspecified';
+                    const hrsRaw = (colMap.hrs > -1 ? cells[colMap.hrs] : '0');
+                    const runRaw = (colMap.run > -1 ? cells[colMap.run] : '');
+                    const shiftRaw = (colMap.shift > -1 ? cells[colMap.shift] : '');
+                    let line = detectLine(locRaw);
+                    let shift = detectShift(shiftRaw);
+                    parsed.push({
+                        sourceFileId: fileId, line,
+                        date: !isNaN(new Date(dateRaw)) ? new Date(dateRaw).toISOString().split('T')[0] : dateRaw,
+                        duration: (parseFloat(hrsRaw) || 0).toFixed(2),
+                        reason: reasonRaw, product: runRaw, shift: shift,
+                        notes: `Imported from ${sourceName}`, photos: []
+                    });
+                }
+                return { entries: parsed, fileId };
+            };
+
+            const startImportProcess = async (sourceName, type, rawData) => {
+                if (isCloudConnected && !user) { alert("Please log in to save data."); setShowCloudSettings(true); return; }
+                setIsImporting(true); setImportError(null); setImportProgress(0); setShowImportManager(false); setShowPasteInput(false);
+                setImportStep(`Scanning...`);
+                try {
+                    await new Promise(r => setTimeout(r, 500));
+                    setImportStep('Parsing...');
+                    const result = parseRawData(rawData, sourceName);
+                    if (!result.entries.length) throw new Error("No valid rows found. Check headers.");
+                    const newFileMeta = { id: result.fileId, name: sourceName, date: new Date().toLocaleDateString(), recordCount: result.entries.length, type };
+                    if (isCloudConnected && user) {
+                        await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').doc(result.fileId).set(newFileMeta);
+                        const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
+                        const BATCH_SIZE = 50;
+                        for (let i = 0; i < result.entries.length; i += BATCH_SIZE) {
+                            const chunk = result.entries.slice(i, i + BATCH_SIZE);
+                            setImportStep(`Uploading batch ${Math.ceil((i+1)/BATCH_SIZE)}...`);
+                            setImportProgress(Math.round(((i + chunk.length) / result.entries.length) * 100));
+                            const promises = chunk.map(e => eventsRef.add(JSON.parse(JSON.stringify(e))));
+                            await Promise.all(promises);
+                        }
+                    } else {
+                        const entriesWithId = result.entries.map((e,i) => ({...e, id: (Date.now()+i).toString()}));
+                        setData(prev => [...entriesWithId, ...prev]);
+                        setImportedFiles(prev => [newFileMeta, ...prev]);
+                    }
+                    setImportStep('Done!'); setTimeout(() => { setIsImporting(false); setShowImportManager(true); }, 500);
+                } catch (e) { setImportError(e.message); }
+            };
+
+            // Handlers
+            const handleUploadNewClick = () => fileInputRef.current.click();
+            const handleFileChange = (e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => startImportProcess(file.name, 'file', ev.target.result); reader.readAsText(file); e.target.value = ''; };
+            const handlePasteProcess = () => { if(!pastedData.trim()) return; startImportProcess('Clipboard', 'paste', pastedData); };
+            const handleAddNote = (id, val) => { setData(prev => prev.map(i => i.id === id ? {...i, notes: val} : i)); setSelectedEvent(p => ({...p, notes: val})); if(user && isCloudConnected) db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({notes: val}); };
+            const initiateDelete = (file) => { setFileToDelete(file); setDeleteStep('password'); setDeletePassword(''); setDeleteError(''); };
+            const verifyPassword = () => { if (deletePassword === '122406') { setDeleteStep('confirm'); setDeleteError(''); } else { setDeleteError('Incorrect password.'); } };
+            const confirmDeleteFile = async () => { if (!fileToDelete) return; if (isCloudConnected && user) { const eventsToDelete = data.filter(item => item.sourceFileId === fileToDelete.id); const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events'); const deletePromises = eventsToDelete.map(event => eventsRef.doc(event.id).delete()); await Promise.all(deletePromises); await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').doc(fileToDelete.id).delete(); } else { const newData = data.filter(i => i.sourceFileId !== fileToDelete.id); setData(newData); setImportedFiles(prev => prev.filter(f => f.id !== fileToDelete.id)); } setFileToDelete(null); setDeleteStep('idle'); setDeletePassword(''); };
+            const handleGoogleLogin = async () => { setAuthError(''); if(window.location.protocol === 'file:') { setAuthError("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { setAuthError(e.message); } };
+            const handleLogout = async () => { await auth.signOut(); };
+            const handleClearConfig = () => { localStorage.removeItem(STORAGE_KEY_FIREBASE_CONFIG); setIsCloudConnected(false); setUser(null); };
+            const handleExportBackup = () => { const blob = new Blob([JSON.stringify({ data, files: importedFiles })], {type: "application/json"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup.json`; document.body.appendChild(a); a.click(); };
+            const handleRestoreBackup = (e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const b = JSON.parse(ev.target.result); if(b.data) { setData(b.data); setImportedFiles(b.files||[]); alert("Restored!"); setShowCloudSettings(false); } } catch(err){alert("Invalid");} }; reader.readAsText(file); e.target.value=''; };
+            const handleSaveConfig = () => { let config = { apiKey: apiKeyInput.trim(), authDomain: `${projectIdInput.trim()}.firebaseapp.com`, projectId: projectIdInput.trim() }; if(initFirebase(config)) { localStorage.setItem(STORAGE_KEY_FIREBASE_CONFIG, JSON.stringify(config)); setIsCloudConnected(true); alert("Connected!"); } else alert("Failed"); };
+            const toggleFileSelection = (id) => { const newSet = new Set(selectedFileIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFileIds(newSet); };
+            const toggleAllFiles = () => { if (selectedFileIds.size === importedFiles.length) setSelectedFileIds(new Set()); else setSelectedFileIds(new Set(importedFiles.map(f => f.id))); };
+            const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('password'); setDeletePassword(''); setDeleteError(''); };
+            const confirmMultiDelete = async () => { setIsDeleting(true); setDeleteProgress(0); const filesToDelete = [...selectedFileIds]; if (isCloudConnected && user) { const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events'); const filesRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files'); for (let i = 0; i < filesToDelete.length; i++) { const fileId = filesToDelete[i]; const snapshot = await eventsRef.where('sourceFileId', '==', fileId).get(); const batchSize = 500; for(let j = 0; j < snapshot.docs.length; j += batchSize) { const batch = db.batch(); snapshot.docs.slice(j, j + batchSize).forEach(doc => batch.delete(doc.ref)); await batch.commit(); } await filesRef.doc(fileId).delete(); setDeleteProgress(Math.round(((i + 1) / filesToDelete.length) * 100)); } } else { const newData = data.filter(i => !selectedFileIds.has(i.sourceFileId)); setData(newData); setImportedFiles(prev => prev.filter(f => !selectedFileIds.has(f.id))); } setIsDeleting(false); setDeleteStep('idle'); setDeletePassword(''); setSelectedFileIds(new Set()); };
+            const handleAddPhotoClick = () => photoInputRef.current.click();
+            const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };
+            const handleDeletePhoto = async (id, photoUrl) => { const eventItem = data.find(i => i.id === id); if(!eventItem) return; const updatedPhotos = (eventItem.photos || []).filter(p => p !== photoUrl); const newData = data.map(item => item.id === id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if (selectedImage === photoUrl) setSelectedImage(updatedPhotos.length > 0 ? updatedPhotos[0] : null); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({ photos: updatedPhotos }); } };
+
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64 = reader.result;
+                        setAppLogo(base64);
+                        localStorage.setItem(STORAGE_KEY_LOGO, base64);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            // --- MERGE LOGIC ---
+            const toggleEventSelection = (id) => {
+                const newSet = new Set(eventLogSelection);
+                if(newSet.has(id)) newSet.delete(id); else newSet.add(id);
+                setEventLogSelection(newSet);
+            };
+
+            const handleMergeEvents = async () => {
+                if(eventLogSelection.size < 2) return;
+                if(!confirm(`Merge ${eventLogSelection.size} selected events?`)) return;
+
+                const eventsToMerge = data.filter(e => eventLogSelection.has(e.id)).sort((a,b) => new Date(b.date) - new Date(a.date));
+                
+                // Create merged object
+                const totalDuration = eventsToMerge.reduce((acc, curr) => acc + parseFloat(curr.duration || 0), 0).toFixed(2);
+                const mergedNotes = eventsToMerge.map(e => e.notes).filter(Boolean).join('\n---\n');
+                const mergedReasons = [...new Set(eventsToMerge.map(e => e.reason))].join(' / ');
+                const allPhotos = eventsToMerge.flatMap(e => e.photos || []);
+
+                const newEvent = {
+                    ...eventsToMerge[0], // Keep most recent date/metadata
+                    id: Date.now().toString(),
+                    duration: totalDuration,
+                    notes: `MERGED EVENT (${eventsToMerge.length} items):\n${mergedNotes}`,
+                    reason: mergedReasons,
+                    photos: allPhotos
+                };
+
+                if(isCloudConnected && user) {
+                    const batch = db.batch();
+                    const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
+                    
+                    // Delete old
+                    eventsToMerge.forEach(e => batch.delete(eventsRef.doc(e.id)));
+                    // Add new
+                    const newDocRef = eventsRef.doc(); // Auto-ID
+                    batch.set(newDocRef, {...newEvent, id: newDocRef.id}); // Use Firestore ID
+                    
+                    await batch.commit();
+                } else {
+                    const newData = data.filter(e => !eventLogSelection.has(e.id));
+                    setData([newEvent, ...newData]);
+                }
+                setEventLogSelection(new Set());
+            };
+
+
+            // --- METRICS ---
+            const filteredData = useMemo(() => {
+                 return data.filter(item => {
+                    const matchesLine = activeTab === 'All Lines' || item.line === activeTab;
+                    const matchesSearch = (item.reason && item.reason.toLowerCase().includes(searchTerm.toLowerCase())) || (item.notes && item.notes.toLowerCase().includes(searchTerm.toLowerCase())) || (item.line && item.line.toLowerCase().includes(searchTerm.toLowerCase()));
+                    const itemDate = new Date(item.date);
+                    const startDate = new Date(dateRange.start);
+                    const endDate = new Date(dateRange.end);
+                    itemDate.setHours(0,0,0,0); startDate.setHours(0,0,0,0); endDate.setHours(0,0,0,0);
+                    const matchesDate = itemDate >= startDate && itemDate <= endDate;
+                    const matchesShift = activeShift === 'All Shifts' || item.shift === activeShift;
+                    return matchesLine && matchesSearch && matchesDate && matchesShift;
+                }).sort((a, b) => new Date(b.date) - new Date(a.date)); 
+            }, [data, activeTab, searchTerm, dateRange, activeShift]);
+
+            const isMultiYear = useMemo(() => {
+                const start = new Date(dateRange.start).getFullYear();
+                const end = new Date(dateRange.end).getFullYear();
+                return end > start;
+            }, [dateRange]);
+
+            const filteredAndReasonData = useMemo(() => filteredData.filter(item => selectedReason ? item.reason === selectedReason : true), [filteredData, selectedReason]);
+
+            const reasonMetrics = useMemo(() => {
+                let totalDuration = 0; let reasonCounts = {}; let reasonCosts = {};
+                filteredData.forEach(item => {
+                    const config = LINE_CONFIG[item.line] || UNKNOWN_LINE;
+                    const duration = parseFloat(item.duration) || 0;
+                    const cost = duration * config.costPerHr;
+                    totalDuration += duration;
+                    const reason = item.reason || 'Unknown';
+                    reasonCounts[reason] = (reasonCounts[reason] || 0) + duration;
+                    reasonCosts[reason] = (reasonCosts[reason] || 0) + cost;
+                });
+                return Object.keys(reasonCounts).map(key => ({ name: key, value: reasonCounts[key], cost: reasonCosts[key], percentage: totalDuration > 0 ? (reasonCounts[key] / totalDuration) * 100 : 0 })).sort((a, b) => b.value - a.value);
+            }, [filteredData]);
+
+            const metrics = useMemo(() => {
+                let totalCost = 0; let totalPacks = 0; let totalDuration = 0;
+                filteredAndReasonData.forEach(item => {
+                    const config = LINE_CONFIG[item.line] || UNKNOWN_LINE;
+                    const duration = parseFloat(item.duration) || 0;
+                    totalDuration += duration;
+                    totalCost += duration * config.costPerHr;
+                    totalPacks += duration * config.packsPerHr;
+                });
+                return { totalCost, totalPacks, totalDuration };
+            }, [filteredAndReasonData]);
+
+            const trendData = useMemo(() => {
+                const months = {};
+                const startDate = new Date(dateRange.start);
+                const endDate = new Date(dateRange.end);
+                let ptr = new Date(startDate);
+                ptr.setDate(1);
+                
+                while(ptr <= endDate || (ptr.getMonth() === endDate.getMonth() && ptr.getFullYear() === endDate.getFullYear())) {
+                    const y = ptr.getFullYear();
+                    const mIndex = ptr.getMonth(); // 0-11
+                    const monthName = ptr.toLocaleDateString('en-US', {month:'short'});
+                    if (!months[y]) months[y] = [];
+                    if (!months[y].find(item => item.monthIndex === mIndex)) {
+                         months[y].push({ name: monthName, monthIndex: mIndex, cost: 0, year: y });
+                    }
+                    ptr.setMonth(ptr.getMonth() + 1);
+                }
+
+                filteredAndReasonData.forEach(item => {
+                    const d = new Date(item.date);
+                    if (!isNaN(d.getTime())) {
+                        const y = d.getFullYear();
+                        const mIndex = d.getMonth();
+                        if (months[y]) {
+                            const monthEntry = months[y].find(m => m.monthIndex === mIndex);
+                            if (monthEntry) {
+                                const config = LINE_CONFIG[item.line] || UNKNOWN_LINE; 
+                                const duration = parseFloat(item.duration) || 0; 
+                                monthEntry.cost += duration * config.costPerHr;
+                            }
+                        }
+                    }
+                });
+                return Object.keys(months).sort().map(year => ({ year: year, data: months[year].sort((a,b) => a.monthIndex - b.monthIndex) }));
+            }, [filteredAndReasonData, dateRange]);
+
+            // --- RENDER ---
+            return (
+                <div className="min-h-screen bg-[#f5f5f7] font-sans text-gray-800 flex flex-col">
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv,.txt,.xlsx"/>
+                    <input type="file" ref={photoInputRef} onChange={handlePhotoChange} className="hidden" accept="image/*"/>
+                    <input type="file" ref={backupInputRef} onChange={handleRestoreBackup} className="hidden" accept=".json"/>
+                    <input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="hidden" accept="image/*" />
+
+                    {isImporting && (
+                        <div className="fixed inset-0 z-[100] bg-white/90 backdrop-blur-md flex flex-col items-center justify-center">
+                            <div className="text-center w-64">
+                                <Icons.Cpu size={64} className="text-blue-500 animate-pulse mx-auto mb-6"/>
+                                <h2 className="text-2xl font-bold mb-2">Processing</h2>
+                                <p className="text-gray-500 mb-4 text-sm">{importStep}</p>
+                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-500 transition-all duration-300" style={{width: `${importProgress}%`}}></div></div>
+                            </div>
+                        </div>
+                    )}
+
+                    <header className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-gray-200">
+                        <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <div 
+                                    className="w-10 h-10 rounded-xl overflow-hidden shadow-lg cursor-pointer bg-blue-600 flex items-center justify-center text-white group hover:ring-4 hover:ring-blue-100 transition-all"
+                                    onClick={() => logoInputRef.current.click()}
+                                    title="Click to change logo"
+                                >
+                                    {appLogo ? (
+                                        <img src={appLogo} alt="Logo" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <Icons.Upload size={20} className="group-hover:scale-110 transition-transform"/>
+                                    )}
+                                </div>
+                                <h1 className="text-xl font-bold text-gray-900 tracking-tight">Unplanned CIP <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-500">Tracker</span></h1>
+                            </div>
+                            <div className="flex gap-3 items-center">
+                                <div className="hidden md:flex items-center bg-gray-100 rounded-xl px-4 py-2 border border-transparent hover:border-gray-200 transition-colors">
+                                    <Icons.Calendar size={16} className="text-gray-400 mr-3" />
+                                    <input type="date" value={dateRange.start} onChange={(e) => setDateRange({...dateRange, start: e.target.value})} className="bg-transparent text-sm border-none focus:ring-0 p-0 text-gray-600 w-24 sm:w-28 font-medium" />
+                                    <span className="text-gray-400 mx-2">to</span>
+                                    <input type="date" value={dateRange.end} onChange={(e) => setDateRange({...dateRange, end: e.target.value})} className="bg-transparent text-sm border-none focus:ring-0 p-0 text-gray-600 w-24 sm:w-28 font-medium" />
+                                </div>
+                                <button onClick={() => setShowCloudSettings(true)} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border ${isCloudConnected ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white text-gray-500'}`}>
+                                    {isCloudConnected ? <Icons.Cloud size={16}/> : <Icons.CloudOff size={16}/>} <span className="hidden md:inline">{isCloudConnected ? 'Synced' : 'Local'}</span>
+                                </button>
+                                <button onClick={() => setShowImportManager(true)} className="flex items-center gap-2 bg-black text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-gray-200"><Icons.FileSpreadsheet size={16}/><span className="hidden md:inline">Import</span></button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8">
+                        <div className="flex flex-col xl:flex-row justify-between items-center mb-8 gap-4">
+                            <div className="flex flex-wrap gap-3 justify-center xl:justify-start w-full xl:w-auto">
+                                <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+                                    {['All Lines', ...Object.keys(LINE_CONFIG)].map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-6 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${activeTab===t ? 'bg-black text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>{t}</button>)}
+                                </div>
+                                <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+                                    {SHIFTS.map(s => <button key={s} onClick={() => setActiveShift(s)} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${activeShift===s ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>{s}</button>)}
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-3 items-center w-full xl:w-auto justify-center xl:justify-end">
+                                <div className="relative w-full max-w-xs"><div className="absolute left-4 top-2.5 text-gray-400"><Icons.Search size={18}/></div><input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-11 pr-4 py-2.5 border border-gray-200 rounded-2xl text-sm transition-all outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                            </div>
+                        </div>
+
+                        {selectedReason && <div className="flex items-center gap-3 mb-6 animate-fadeIn"><span className="text-xs font-bold text-gray-400 uppercase">Filter</span><button onClick={() => setSelectedReason(null)} className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-xs font-bold">{selectedReason} <Icons.X size={14}/></button></div>}
+
+                        <div className={`grid gap-6 pb-20 layout-transition ${isMultiYear ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+                            <div className={`grid gap-6 ${isMultiYear ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+                                <DashboardWidget id="summary" title="Impact Summary" icon={<Icons.Zap size={20}/>} expandedId={expandedWidget} setExpandedId={setExpandedWidget} colorClass="text-blue-600" className="h-96">
+                                    <div className="h-full flex flex-col justify-center p-2">
+                                        <div className="flex justify-between mb-4"><h3 className="text-5xl font-bold text-gray-900">{formatCurrency(metrics.totalCost)}</h3><span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold uppercase h-fit">Loss</span></div>
+                                        <div className="w-full bg-gray-100 rounded-full h-2 mb-8"><div className="bg-blue-500 h-full rounded-full" style={{width:'65%'}}></div></div>
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100"><h4 className="text-2xl font-bold">{formatNumber(metrics.totalPacks)}</h4><p className="text-xs text-gray-500 font-bold uppercase mt-1 flex gap-1"><Icons.Package size={12}/> Packs Lost</p></div>
+                                            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100"><h4 className="text-2xl font-bold">{metrics.totalDuration.toFixed(1)}<span className="text-sm text-gray-400 ml-1">hrs</span></h4><p className="text-xs text-gray-500 font-bold uppercase mt-1 flex gap-1"><Icons.Clock size={12}/> Downtime</p></div>
+                                        </div>
+                                    </div>
+                                </DashboardWidget>
+                                <DashboardWidget id="reasons" title="Top Reasons" icon={<Icons.AlertTriangle size={20}/>} expandedId={expandedWidget} setExpandedId={setExpandedWidget} colorClass="text-orange-500" className="h-96">
+                                    <div className="h-full overflow-y-auto custom-scrollbar pr-2">
+                                        <div className="space-y-3 mt-2">
+                                            {reasonMetrics.map((r,i) => (
+                                                <div key={i} onClick={() => setSelectedReason(selectedReason===r.name?null:r.name)} className={`flex justify-between p-3 rounded-xl cursor-pointer border transition-all ${selectedReason===r.name ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}>
+                                                    <div className="flex gap-3 relative w-full items-center"><div className="absolute inset-0 bg-gray-50 rounded-lg origin-left transition-transform" style={{transform:`scaleX(${r.value/(metrics.totalDuration||1)})`, opacity:0.5}}></div><span className="relative z-10 text-sm font-bold text-gray-700">{r.name}</span></div>
+                                                    <div className="text-right min-w-[80px]"><span className="block text-sm font-bold">{r.value.toFixed(1)}h</span><span className="block text-[10px] text-gray-400 font-mono">{formatCurrency(r.cost)}</span></div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </DashboardWidget>
+                            </div>
+
+                            <div className={`grid gap-6 ${isMultiYear ? 'grid-cols-1' : 'grid-cols-1'}`}>
+                                {/* Event Log - Now Full Width in its Row */}
+                                <DashboardWidget id="log" title="Event Log" icon={<Icons.List size={20}/>} expandedId={expandedWidget} setExpandedId={setExpandedWidget} colorClass="text-purple-600" className="h-96 w-full">
+                                    <div className="flex justify-end mb-2 min-h-[32px]">
+                                        {eventLogSelection.size > 1 && (
+                                            <button onClick={handleMergeEvents} className="flex items-center gap-2 px-3 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-bold hover:bg-purple-200 transition-colors animate-in fade-in zoom-in">
+                                                <Icons.Merge size={14}/> Merge Selected ({eventLogSelection.size})
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="h-full overflow-y-auto custom-scrollbar pr-2 -mt-10 pt-10"> {/* Offset for button space */}
+                                        <table className="w-full text-left text-sm border-separate border-spacing-y-2">
+                                            <thead>
+                                                <tr className="text-xs font-bold text-gray-400 uppercase">
+                                                    <th className="w-8"></th> {/* Checkbox Col */}
+                                                    <th className="pb-2">Date</th>
+                                                    <th className="pb-2">Reason</th>
+                                                    <th className="pb-2 text-right">Cost</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {filteredAndReasonData.map(item => (
+                                                    <tr key={item.id} className={`group cursor-pointer ${eventLogSelection.has(item.id) ? 'bg-purple-50' : ''}`} onClick={(e) => {
+                                                        // If clicking row (not checkbox), open details
+                                                        if(!e.target.closest('.checkbox-area')) setSelectedEvent(item);
+                                                    }}>
+                                                        <td className="p-3 rounded-l-xl border-y border-l border-transparent checkbox-area" onClick={(e) => { e.stopPropagation(); toggleEventSelection(item.id); }}>
+                                                            <div className="flex items-center justify-center text-gray-400 hover:text-purple-600">
+                                                                {eventLogSelection.has(item.id) ? <Icons.CheckSquare size={16} className="text-purple-600"/> : <Icons.Square size={16}/>}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 border-y border-transparent font-mono text-xs text-gray-500">{item.date}</td>
+                                                        <td className="p-3 border-y border-transparent font-bold text-gray-800">{item.reason}</td>
+                                                        <td className="p-3 rounded-r-xl border-y border-r border-transparent text-right font-bold text-red-600">{formatCurrency(parseFloat(item.duration)*LINE_CONFIG[item.line].costPerHr)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </DashboardWidget>
+
+                                {/* Trend Chart - Full Width */}
+                                <DashboardWidget id="trend" title="Cost Trend" icon={<Icons.TrendingUp size={20}/>} expandedId={expandedWidget} setExpandedId={setExpandedWidget} colorClass="text-green-600" className="h-96 w-full">
+                                    <div className="h-full w-full flex overflow-x-auto custom-scrollbar pb-2">
+                                        {trendData.length > 0 ? (
+                                            trendData.map((yearGroup) => (
+                                                <div key={yearGroup.year} className="flex-1 min-w-[200px] h-full px-2 flex flex-col border-r border-gray-100 last:border-0">
+                                                    <div className="text-center text-sm font-bold text-gray-500 mb-2 bg-gray-50 py-1 rounded-lg">{yearGroup.year}</div>
+                                                    <div className="flex-1 relative">
+                                                         <ResponsiveContainer width="100%" height="100%">
+                                                            <BarChart data={yearGroup.data} margin={{top:10, right:0, left:0, bottom:0}}>
+                                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
+                                                                <XAxis dataKey="name" interval={0} axisLine={false} tickLine={false} tick={{fill:'#9ca3af', fontSize:10}} dy={10}/>
+                                                                {/* Only show Y-axis on the first chart if multiple to save space, or use abbreviated */}
+                                                                <YAxis hide={true} /> 
+                                                                <RechartsTooltip 
+                                                                    cursor={{fill:'#f9fafb'}} 
+                                                                    contentStyle={{borderRadius:'12px', border:'none', boxShadow:'0 10px 15px -3px rgba(0,0,0,0.1)'}} 
+                                                                    formatter={(v) => [formatCurrency(v), 'Cost']}
+                                                                />
+                                                                <Bar dataKey="cost" radius={[4,4,0,0]}>
+                                                                    {yearGroup.data.map((entry, index) => (
+                                                                        <Cell key={`cell-${index}`} fill={MONTH_COLORS[index % MONTH_COLORS.length]} />
+                                                                    ))}
+                                                                </Bar>
+                                                            </BarChart>
+                                                        </ResponsiveContainer>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="flex items-center justify-center w-full h-full text-gray-400 text-sm">No data available for selected range</div>
+                                        )}
+                                    </div>
+                                </DashboardWidget>
+                            </div>
+                        </div>
+                    </main>
+                    
+                    <SidePanel isOpen={!!selectedEvent} onClose={() => setSelectedEvent(null)} title="Event Details">
+                         {selectedEvent && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between bg-gray-900 text-white p-6 rounded-2xl shadow-lg">
+                                    <div><p className="text-gray-400 text-xs font-bold uppercase mb-1">Total Cost</p><h2 className="text-3xl font-bold">{formatCurrency(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].costPerHr)}</h2></div>
+                                    <div className="text-right"><p className="text-gray-400 text-xs font-bold uppercase mb-1">Duration</p><h2 className="text-3xl font-bold">{selectedEvent.duration}<span className="text-lg text-gray-500 ml-1">hrs</span></h2></div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 border border-gray-100 rounded-2xl bg-gray-50"><label className="text-xs font-bold text-gray-400 uppercase">Line</label><p className="font-bold text-gray-800 text-lg">{selectedEvent.line}</p></div>
+                                    <div className="p-4 border border-gray-100 rounded-2xl bg-gray-50"><label className="text-xs font-bold text-gray-400 uppercase">Date</label><p className="font-bold text-gray-800 text-lg">{selectedEvent.date}</p></div>
+                                    <div className="p-4 border border-blue-100 bg-blue-50 rounded-2xl"><label className="text-xs font-bold text-blue-400 uppercase">Product/Run</label><p className="font-bold text-blue-900 text-sm break-words">{selectedEvent.product || 'N/A'}</p></div>
+                                    <div className="p-4 border border-purple-100 bg-purple-50 rounded-2xl"><label className="text-xs font-bold text-purple-400 uppercase">Shift</label><p className="font-bold text-purple-900 text-lg">{selectedEvent.shift || 'N/A'}</p></div>
+                                    <div className="col-span-2 p-4 border border-gray-100 rounded-2xl"><label className="text-xs font-bold text-gray-400 uppercase">Reason</label><p className="font-bold text-gray-900 text-lg">{selectedEvent.reason}</p></div>
+                                </div>
+                                <div><label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Notes</label><textarea className="w-full h-32 p-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-sm resize-none" placeholder="Details..." value={selectedEvent.notes||''} onChange={e => handleAddNote(selectedEvent.id, e.target.value)}/></div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Evidence</label>
+                                    <div className="aspect-video w-full bg-gray-50 rounded-2xl overflow-hidden mb-4 flex items-center justify-center border border-gray-200 relative group shadow-inner">
+                                        {selectedImage ? (
+                                            <>
+                                                <img src={selectedImage} alt="Selected" className="w-full h-full object-contain" />
+                                                <button onClick={() => handleDeletePhoto(selectedEvent.id, selectedImage)} className="absolute top-3 right-3 p-2 bg-white/90 backdrop-blur-sm rounded-full text-gray-500 hover:text-red-600 hover:bg-red-50 transition-all shadow-sm"><Icons.Trash2 size={16} /></button>
+                                            </>
+                                        ) : (
+                                            <div className="flex flex-col items-center gap-2 text-gray-400"><Icons.ImageIcon size={32} /><span className="text-xs font-medium">No image selected</span></div>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                                        <button onClick={handleAddPhotoClick} className="w-16 h-16 flex-shrink-0 bg-white border border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 hover:text-blue-500 hover:border-blue-200 transition-all shadow-sm"><Icons.Camera size={20} /></button>
+                                        {selectedEvent.photos && selectedEvent.photos.map((photoUrl, i) => (
+                                            <div key={i} onClick={() => setSelectedImage(photoUrl)} className={`w-16 h-16 flex-shrink-0 rounded-xl overflow-hidden border-2 cursor-pointer transition-all shadow-sm ${selectedImage === photoUrl ? 'border-blue-500 ring-2 ring-blue-100' : 'border-transparent hover:border-gray-200'}`}>
+                                                <img src={photoUrl} alt={`Thumbnail ${i}`} className="w-full h-full object-cover" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </SidePanel>
+
+                    {/* Modals for Cloud Settings & Import (Existing Code) */}
+                    {showCloudSettings && (
+                        <Modal isOpen={showCloudSettings} onClose={() => setShowCloudSettings(false)} title="Cloud Settings">
+                            <div className="space-y-6">
+                                {!isCloudConnected ? (
+                                    <div className="space-y-4">
+                                        <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 mb-3"><p className="text-xs text-blue-800 font-bold">Firebase Connect</p></div>
+                                        {/* ... (Manual inputs for override) ... */}
+                                        <div className="space-y-3"><input className="w-full p-3 border rounded-xl text-sm" placeholder="Project ID" value={projectIdInput} onChange={e=>setProjectIdInput(e.target.value)}/><input className="w-full p-3 border rounded-xl text-sm" placeholder="API Key" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)}/></div>
+                                        <button onClick={handleSaveConfig} className="w-full bg-black text-white py-3 rounded-xl font-bold mt-3">Connect</button>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        {!user ? (
+                                            <div className="space-y-4 text-center">
+                                                <div className="inline-block p-3 bg-green-100 rounded-full text-green-600 mb-2"><Icons.CheckCircle size={32}/></div>
+                                                <h3 className="text-lg font-bold">Database Connected</h3>
+                                                {authError && <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{authError}{authErrorHelp&&<div className="text-xs mt-1">{authErrorHelp}</div>}</div>}
+                                                <button onClick={handleGoogleLogin} className="w-full bg-white border border-gray-300 py-3 rounded-xl font-bold mb-3 flex items-center justify-center gap-2 hover:bg-gray-50 shadow-sm"><Icons.Chrome size={20} className="text-blue-500"/> Login with Google</button>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-6 text-center">
+                                                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"><span className="text-2xl font-bold text-gray-400">{user.email[0].toUpperCase()}</span></div>
+                                                <div><h3 className="text-xl font-bold">{user.email}</h3><p className="text-green-600 text-sm font-medium flex items-center justify-center gap-1"><Icons.CheckCircle size={14}/> Cloud Active</p></div>
+                                                <button onClick={handleLogout} className="w-full py-3 border border-gray-200 rounded-xl text-gray-600 font-bold hover:bg-gray-50 flex items-center justify-center gap-2"><Icons.LogOut size={18}/> Log Out</button>
+                                            </div>
+                                        )}
+                                        <div className="mt-8 pt-6 border-t border-gray-100 flex gap-3">
+                                             <button onClick={handleExportBackup} className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg text-sm font-bold hover:bg-gray-200 flex items-center justify-center gap-2"><Icons.Download size={14}/> Backup</button>
+                                             <button onClick={() => backupInputRef.current.click()} className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg text-sm font-bold hover:bg-gray-200 flex items-center justify-center gap-2"><Icons.Upload size={14}/> Restore</button>
+                                        </div>
+                                        <div className="mt-4 pt-4 border-t border-gray-100"><button onClick={handleClearConfig} className="text-xs text-red-400 hover:text-red-600 underline w-full text-center">Disconnect Database</button></div>
+                                    </div>
+                                )}
+                            </div>
+                        </Modal>
+                    )}
+
+                    {showImportManager && (
+                        <Modal isOpen={showImportManager} onClose={() => setShowImportManager(false)} title="Import Manager">
+                            {deleteStep === 'password' && (
+                                <div className="mb-6 bg-red-50 p-4 rounded-xl border border-red-100">
+                                    <h4 className="text-sm font-bold text-red-800 mb-2 flex items-center gap-2"><Icons.Lock size={16}/> Security Check</h4>
+                                    <div className="flex gap-2"><input type="password" value={deletePassword} onChange={e=>setDeletePassword(e.target.value)} className="border border-red-200 rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="Password (122406)"/><button onClick={verifyPassword} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold">Verify</button></div>
+                                    {deleteError && <p className="text-xs text-red-600 font-bold mt-2">{deleteError}</p>}
+                                </div>
+                            )}
+                            {deleteStep === 'confirm' && (
+                                <div className="mb-6 bg-red-50 p-4 rounded-xl border border-red-100 text-center">
+                                    <h3 className="text-lg font-bold text-red-900">Confirm Deletion</h3>
+                                    <div className="flex justify-center gap-3 mt-4"><button onClick={()=>setDeleteStep('idle')} className="px-4 py-2 text-gray-600 font-medium text-sm hover:bg-gray-200 rounded-lg">Cancel</button><button onClick={confirmMultiDelete} className="px-4 py-2 bg-red-600 text-white font-bold text-sm rounded-lg hover:bg-red-700">Delete</button></div>
+                                </div>
+                            )}
+                            <div className="flex justify-end gap-3 mb-6">
+                                <button onClick={() => setShowPasteInput(!showPasteInput)} className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors"><Icons.Clipboard size={16}/> {showPasteInput ? 'Hide' : 'Paste Data'}</button>
+                                <button onClick={handleUploadNewClick} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800 transition-colors"><Icons.Plus size={16}/> Upload CSV</button>
+                            </div>
+                            {showPasteInput && <div className="mb-6"><textarea value={pastedData} onChange={e=>setPastedData(e.target.value)} className="w-full h-32 p-3 text-xs font-mono border rounded-lg mb-3" placeholder="Paste rows here..."/><button onClick={handlePasteProcess} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm w-full">Analyze</button></div>}
+                            <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto custom-scrollbar">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200 sticky top-0 z-10">
+                                        <tr>
+                                            <th className="px-4 py-3 w-10 text-center cursor-pointer hover:bg-gray-100" onClick={toggleAllFiles}>
+                                                 {importedFiles.length > 0 && selectedFileIds.size === importedFiles.length ? <Icons.CheckSquare size={16} className="text-blue-600"/> : <Icons.Square size={16}/>}
+                                            </th>
+                                            <th className="px-4 py-3">File</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Records</th><th className="px-4 py-3 text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {importedFiles.length===0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-gray-400">No files.</td></tr> : importedFiles.map(f => (
+                                            <tr key={f.id} className={`hover:bg-gray-50 ${selectedFileIds.has(f.id) ? 'bg-blue-50/50' : ''}`}>
+                                                <td className="px-4 py-3 text-center cursor-pointer" onClick={() => toggleFileSelection(f.id)}>
+                                                    <div className="flex justify-center">{selectedFileIds.has(f.id) ? <Icons.CheckSquare size={16} className="text-blue-600"/> : <Icons.Square size={16} className="text-gray-400"/>}</div>
+                                                </td>
+                                                <td className="px-4 py-3 flex items-center gap-2 font-medium text-gray-800"><Icons.FileText size={16} className="text-blue-500"/> {f.name}</td>
+                                                <td className="px-4 py-3 text-gray-500">{f.date}</td>
+                                                <td className="px-4 py-3 text-gray-500">{f.recordCount}</td>
+                                                <td className="px-4 py-3 text-right">
+                                                    <button onClick={()=>{ setSelectedFileIds(new Set([f.id])); initiateDelete(); }} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg"><Icons.Trash2 size={16}/></button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div className="mt-6 pt-4 border-t border-gray-100 flex justify-end"><button onClick={() => setShowImportManager(false)} className="bg-gray-100 text-gray-700 px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">Done</button></div>
+                        </Modal>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<UnplannedCIPTracker />);
+    </script>
+</body>
+</html>
