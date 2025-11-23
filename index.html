@@ -47,14 +47,8 @@
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-        .glass-panel-hover:hover {
-            background: rgba(39, 39, 42, 0.8);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
         
         body { background-color: #09090b; color: #e4e4e7; }
-        .neon-text { color: #ccff00; }
-        .neon-bg { background-color: #ccff00; color: #000; }
     </style>
 </head>
 <body class="font-sans overflow-hidden selection:bg-[#ccff00] selection:text-black">
@@ -110,6 +104,8 @@
         };
 
         // --- 4. UI COMPONENTS ---
+        
+        // Searchable Dropdown Component
         const FilterDropdown = ({ label, options, value, onChange, iconName }) => {
             const [isOpen, setIsOpen] = useState(false);
             const [searchTerm, setSearchTerm] = useState('');
@@ -247,6 +243,10 @@
             const [activeProduct, setActiveProduct] = useState('All Products');
             const [currentView, setCurrentView] = useState('Overview');
 
+            // Pagination
+            const [logPage, setLogPage] = useState(0);
+            const ROWS_PER_PAGE = 50;
+
             const [data, setData] = useState([]);
             const [importedFiles, setImportedFiles] = useState([]); 
             const [searchTerm, setSearchTerm] = useState('');
@@ -276,14 +276,11 @@
             // Delete State
             const [deleteStep, setDeleteStep] = useState('idle'); 
             const [isDeleting, setIsDeleting] = useState(false);
+            const [deleteProgress, setDeleteProgress] = useState(0);
             const [fileToDelete, setFileToDelete] = useState(null);
             const [authError, setAuthError] = useState('');
             const [projectIdInput, setProjectIdInput] = useState('');
             const [apiKeyInput, setApiKeyInput] = useState('');
-
-            // Pagination
-            const [logPage, setLogPage] = useState(0);
-            const ROWS_PER_PAGE = 50;
 
             const LINE_CONFIG = {
                 'Line A': { color: '#3b82f6', costPerHr: 1003.50, packsPerHr: 15000 },
@@ -479,14 +476,12 @@
             const handleSaveConfig = () => { let config = { apiKey: apiKeyInput.trim(), authDomain: `${projectIdInput.trim()}.firebaseapp.com`, projectId: projectIdInput.trim() }; if(initFirebase(config)) { localStorage.setItem(STORAGE_KEY_FIREBASE_CONFIG, JSON.stringify(config)); setIsCloudConnected(true); alert("Connected!"); } else alert("Failed"); };
             const toggleFileSelection = (id) => { const newSet = new Set(selectedFileIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFileIds(newSet); };
             const toggleAllFiles = () => { if (selectedFileIds.size === importedFiles.length) setSelectedFileIds(new Set()); else setSelectedFileIds(new Set(importedFiles.map(f => f.id))); };
-
+            const confirmDeleteFile = () => {}; 
 
             return (
                 <div className="min-h-screen bg-[#0f0f11] text-gray-200 font-sans flex flex-col p-4 md:p-6 gap-6">
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv"/>
-                    <input type="file" ref={photoInputRef} onChange={handlePhotoChange} className="hidden" accept="image/*"/>
-                    <input type="file" ref={backupInputRef} onChange={handleRestoreBackup} className="hidden" accept=".json"/>
-                    <input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="hidden" accept="image/*" />
+                    <input type="file" ref={logoInputRef} onChange={(e)=>{ if(e.target.files[0]) { const r=new FileReader(); r.onload=()=>{ setAppLogo(r.result); localStorage.setItem(STORAGE_KEY_LOGO, r.result); }; r.readAsDataURL(e.target.files[0]); } }} className="hidden" accept="image/*"/>
 
                     {/* HEADER */}
                     <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-[#18181b] p-4 rounded-3xl border border-gray-800 shadow-xl">
@@ -530,8 +525,6 @@
 
                     {/* DASHBOARD GRID */}
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 min-h-0">
-                        
-                        {/* COL 1: STATS & IMPACT */}
                         <div className="xl:col-span-1 flex flex-col gap-6">
                             <Card title="Total Impact" iconName="dollar-sign" className="bg-gradient-to-br from-[#1e1e24] to-[#18181b] justify-center min-h-[150px]">
                                  <h2 className="text-4xl font-bold text-white mb-2">{formatCurrency(metrics.totalCost)}</h2>
@@ -561,10 +554,7 @@
                             </Card>
                         </div>
 
-                        {/* COL 2 & 3 */}
                         <div className="xl:col-span-3 grid grid-rows-[auto_1fr] gap-6">
-                            
-                            {/* Row 1: Max Loss Chart & Event Log Side-by-Side */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
                                 <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -574,7 +564,6 @@
                                             <Tooltip 
                                                 cursor={{fill:'rgba(255,255,255,0.05)'}}
                                                 contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}
-                                                itemStyle={{ color: '#fff' }} // Ensure white font for money
                                                 formatter={(v, n, props) => [formatCurrency(v), props.payload.reason]}
                                             />
                                             <Bar dataKey="cost" radius={[4,4,0,0]}>
@@ -590,44 +579,42 @@
                                     className="h-full"
                                     action={eventLogSelection.size > 1 && <button onClick={handleMergeEvents} className="px-3 py-1 bg-[#ccff00] text-black rounded-lg text-xs font-bold hover:bg-[#b3e600]">Merge ({eventLogSelection.size})</button>}
                                 >
-                                    <div className="h-full flex flex-col">
-                                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                                            <table className="w-full text-left text-sm border-separate border-spacing-y-1">
-                                                <thead className="sticky top-0 bg-[#1e1e24] z-10 text-xs text-gray-500 uppercase font-bold">
-                                                    <tr>
-                                                        <th className="w-8 text-center cursor-pointer" onClick={toggleAllEvents}>
-                                                            {eventLogSelection.size > 0 ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14}/>}
-                                                        </th>
-                                                        <th>Date / Line</th>
-                                                        <th>Reason</th>
-                                                        <th>Product</th>
-                                                        <th>Shift</th>
-                                                        <th className="text-right">Cost</th>
+                                    <div className="h-full overflow-y-auto custom-scrollbar pr-2">
+                                        <table className="w-full text-left text-sm border-separate border-spacing-y-1">
+                                            <thead className="sticky top-0 bg-[#1e1e24] z-10 text-xs text-gray-500 uppercase font-bold">
+                                                <tr>
+                                                    <th className="w-8 text-center cursor-pointer" onClick={toggleAllEvents}>
+                                                        {eventLogSelection.size > 0 ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14}/>}
+                                                    </th>
+                                                    <th>Date / Line</th>
+                                                    <th>Reason</th>
+                                                    <th>Product</th>
+                                                    <th>Shift</th>
+                                                    <th className="text-right">Cost</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="text-gray-300 text-xs">
+                                                {paginatedData.map(item => (
+                                                    <tr key={item.id} onClick={(e)=>{ if(!e.target.closest('.checkbox')) setSelectedEvent(item) }} className={`group hover:bg-white/5 cursor-pointer ${eventLogSelection.has(item.id) ? 'bg-white/10' : ''}`}>
+                                                        <td className="p-2 rounded-l-lg checkbox text-center" onClick={(e)=>{ e.stopPropagation(); toggleEventSelection(item.id); }}>
+                                                            {eventLogSelection.has(item.id) ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14} className="text-gray-600"/>}
+                                                        </td>
+                                                        <td className="p-2"><div>{formatDate(item.date)}</div><div className="text-[10px] font-bold text-[#ccff00]">{item.line}</div></td>
+                                                        <td className="p-2 truncate max-w-[100px] font-medium text-white" title={item.reason}>{item.reason}</td>
+                                                        <td className="p-2 truncate max-w-[80px] text-blue-300">{item.product || '-'}</td>
+                                                        <td className="p-2 text-gray-500">{item.shift}</td>
+                                                        <td className="p-2 rounded-r-lg text-right font-mono">{formatCurrency(parseFloat(item.duration)*LINE_CONFIG[item.line].costPerHr)}</td>
                                                     </tr>
-                                                </thead>
-                                                <tbody className="text-gray-300 text-xs">
-                                                    {paginatedData.map(item => (
-                                                        <tr key={item.id} onClick={(e)=>{ if(!e.target.closest('.checkbox')) setSelectedEvent(item) }} className={`group hover:bg-white/5 cursor-pointer ${eventLogSelection.has(item.id) ? 'bg-white/10' : ''}`}>
-                                                            <td className="p-2 rounded-l-lg checkbox text-center" onClick={(e)=>{ e.stopPropagation(); toggleEventSelection(item.id); }}>
-                                                                {eventLogSelection.has(item.id) ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14} className="text-gray-600"/>}
-                                                            </td>
-                                                            <td className="p-2"><div>{formatDate(item.date)}</div><div className="text-[10px] font-bold text-[#ccff00]">{item.line}</div></td>
-                                                            <td className="p-2 truncate max-w-[100px] font-medium text-white" title={item.reason}>{item.reason}</td>
-                                                            <td className="p-2 truncate max-w-[80px] text-blue-300">{item.product || '-'}</td>
-                                                            <td className="p-2 text-gray-500">{item.shift}</td>
-                                                            <td className="p-2 rounded-r-lg text-right font-mono">{formatCurrency(parseFloat(item.duration)*LINE_CONFIG[item.line].costPerHr)}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                        {/* Pagination */}
-                                        <div className="pt-2 border-t border-white/5 flex justify-between items-center text-xs text-gray-500">
-                                            <span>Showing {logPage * ROWS_PER_PAGE + 1} - {Math.min((logPage + 1) * ROWS_PER_PAGE, filteredData.length)} of {filteredData.length}</span>
-                                            <div className="flex gap-2">
-                                                <button disabled={logPage === 0} onClick={() => setLogPage(p => p - 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Prev</button>
-                                                <button disabled={(logPage + 1) * ROWS_PER_PAGE >= filteredData.length} onClick={() => setLogPage(p => p + 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Next</button>
-                                            </div>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {/* Pagination */}
+                                    <div className="pt-2 border-t border-white/5 flex justify-between items-center text-xs text-gray-500">
+                                        <span>Showing {logPage * ROWS_PER_PAGE + 1} - {Math.min((logPage + 1) * ROWS_PER_PAGE, filteredData.length)} of {filteredData.length}</span>
+                                        <div className="flex gap-2">
+                                            <button disabled={logPage === 0} onClick={() => setLogPage(p => p - 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Prev</button>
+                                            <button disabled={(logPage + 1) * ROWS_PER_PAGE >= filteredData.length} onClick={() => setLogPage(p => p + 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Next</button>
                                         </div>
                                     </div>
                                 </Card>
@@ -646,7 +633,6 @@
                                                          <Tooltip 
                                                              cursor={{fill:'rgba(255,255,255,0.05)'}}
                                                              contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}
-                                                             itemStyle={{ color: '#fff' }} 
                                                              formatter={v => [formatCurrency(v), 'Cost']}
                                                          />
                                                          <Bar dataKey="cost" radius={[4,4,0,0]}>
@@ -665,12 +651,9 @@
                     </div>
                     
                     {showCloudSettings && <Modal isOpen={showCloudSettings} onClose={() => setShowCloudSettings(false)} title="Settings"><div className="text-gray-400 text-sm text-center">Settings panel content...</div><div className="pt-4 text-center"><button onClick={handleClearConfig} className="text-xs text-red-500 hover:text-red-400 underline">Reset Cloud</button></div></Modal>}
-                    
-                    {/* EVENT DETAILS MODAL */}
                     {selectedEvent && (
                         <Modal isOpen={!!selectedEvent} onClose={() => setSelectedEvent(null)} title="Event Details">
                              <div className="grid grid-cols-2 gap-4 text-sm text-gray-300 mb-4">
-                                {/* Top Row Cards */}
                                 <div className="col-span-1 bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
                                     <span className="block text-xs text-red-400 font-bold uppercase">Financial Loss</span>
                                     <span className="text-lg font-mono text-red-500">{formatCurrency(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].costPerHr)}</span>
@@ -680,16 +663,14 @@
                                     <span className="text-lg font-mono text-orange-500">{formatNumber(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].packsPerHr)}</span>
                                 </div>
 
-                                {/* Details Grid */}
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Line</span>{selectedEvent.line}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Date</span>{formatDate(selectedEvent.date)}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Shift</span>{selectedEvent.shift}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Duration</span>{selectedEvent.duration}h</div>
                                 <div className="col-span-2 bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Reason</span>{selectedEvent.reason}</div>
-                                <div className="col-span-2 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30"><span className="block text-xs text-blue-400">Product</span>{selectedEvent.product || 'N/A'}</div>
+                                <div className="col-span-2 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30"><span className="block text-xs text-blue-400">Product</span>{selectedEvent.product}</div>
                              </div>
                              
-                             {/* Notes Section */}
                              <div className="mb-4">
                                 <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Operator Notes</label>
                                 <textarea 
@@ -700,7 +681,6 @@
                                 />
                              </div>
                              
-                             {/* Photo Evidence Section */}
                              <div>
                                 <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Evidence</label>
                                 <div className="aspect-video w-full bg-gray-800 rounded-2xl overflow-hidden mb-4 flex items-center justify-center border border-gray-700 relative group shadow-inner">
