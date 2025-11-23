@@ -62,7 +62,6 @@
 
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect, useCallback } = React;
-        // FIX: Ensure LabelList is destructured
         const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, LabelList } = Recharts;
 
         // --- 1. CONFIGURATION ---
@@ -81,8 +80,6 @@
         const STORAGE_KEY_DATA = 'cip_tracker_data';
         const STORAGE_KEY_FILES = 'cip_tracker_files';
         const STORAGE_KEY_LOGO = 'cip_tracker_logo'; 
-        const STORAGE_KEY_PIN = 'cip_tracker_pin';
-        const STORAGE_KEY_BIOMETRIC = 'cip_tracker_biometric_enabled';
 
         const CHART_COLORS = ['#ccff00', '#3b82f6', '#a855f7', '#ef4444', '#f97316', '#10b981']; 
         const MONTH_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];
@@ -102,50 +99,6 @@
             return <span ref={ref} className="inline-flex items-center justify-center"></span>;
         };
 
-        // Map icons
-        const Icons = {
-            LayoutDashboard: (p) => <IconWrapper name="layout-dashboard" {...p} />,
-            FileSpreadsheet: (p) => <IconWrapper name="file-spreadsheet" {...p} />,
-            Calendar: (p) => <IconWrapper name="calendar" {...p} />,
-            Search: (p) => <IconWrapper name="search" {...p} />,
-            AlertTriangle: (p) => <IconWrapper name="alert-triangle" {...p} />,
-            TrendingUp: (p) => <IconWrapper name="trending-up" {...p} />,
-            DollarSign: (p) => <IconWrapper name="dollar-sign" {...p} />,
-            Package: (p) => <IconWrapper name="package" {...p} />,
-            Clock: (p) => <IconWrapper name="clock" {...p} />,
-            ChevronRight: (p) => <IconWrapper name="chevron-right" {...p} />,
-            Plus: (p) => <IconWrapper name="plus" {...p} />,
-            ImageIcon: (p) => <IconWrapper name="image" {...p} />,
-            X: (p) => <IconWrapper name="x" {...p} />,
-            PlayCircle: (p) => <IconWrapper name="play-circle" {...p} />,
-            Cpu: (p) => <IconWrapper name="cpu" {...p} />,
-            Camera: (p) => <IconWrapper name="camera" {...p} />,
-            Trash2: (p) => <IconWrapper name="trash-2" {...p} />,
-            Zap: (p) => <IconWrapper name="zap" {...p} />,
-            Lock: (p) => <IconWrapper name="lock" {...p} />,
-            Unlock: (p) => <IconWrapper name="unlock" {...p} />,
-            FileText: (p) => <IconWrapper name="file-text" {...p} />,
-            CheckCircle: (p) => <IconWrapper name="check-circle" {...p} />,
-            AlertCircle: (p) => <IconWrapper name="alert-circle" {...p} />,
-            Clipboard: (p) => <IconWrapper name="clipboard" {...p} />,
-            List: (p) => <IconWrapper name="list" {...p} />,
-            Cloud: (p) => <IconWrapper name="cloud" {...p} />,
-            CloudOff: (p) => <IconWrapper name="cloud-off" {...p} />,
-            Settings: (p) => <IconWrapper name="settings" {...p} />,
-            LogOut: (p) => <IconWrapper name="log-out" {...p} />,
-            Chrome: (p) => <IconWrapper name="chrome" {...p} />,
-            Info: (p) => <IconWrapper name="info" {...p} />,
-            Download: (p) => <IconWrapper name="download" {...p} />,
-            Upload: (p) => <IconWrapper name="upload" {...p} />,
-            Maximize2: (p) => <IconWrapper name="maximize-2" {...p} />,
-            Minimize2: (p) => <IconWrapper name="minimize-2" {...p} />,
-            CheckSquare: (p) => <IconWrapper name="check-square" {...p} />,
-            Square: (p) => <IconWrapper name="square" {...p} />,
-            Merge: (p) => <IconWrapper name="merge" {...p} />,
-            ScanFace: (p) => <IconWrapper name="scan-face" {...p} />,
-            PieChart: (p) => <IconWrapper name="pie-chart" {...p} />,
-        };
-
         // --- 3. HELPERS ---
         const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
         const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
@@ -155,26 +108,17 @@
             if (isNaN(date.getTime())) return dateString; 
             return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         };
-
-        // --- 5. FIREBASE SETUP ---
-        let db, auth, appInstance;
-        const initFirebase = (config) => {
-            try {
-                if (!firebase.apps.length) appInstance = firebase.initializeApp(config);
-                else appInstance = firebase.app(); 
-                auth = firebase.auth();
-                db = firebase.firestore();
-                return true;
-            } catch (e) { return false; }
+        
+        const formatTime = (timeString) => {
+            if (!timeString) return 'N/A';
+            const date = new Date(timeString);
+            if (!isNaN(date.getTime())) {
+                return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            }
+            return timeString; // Return raw string if not a date object
         };
-        let initialCloudState = false;
-        if (HARDCODED_CONFIG.apiKey) initialCloudState = initFirebase(HARDCODED_CONFIG);
-        else {
-            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);
-            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));
-        }
 
-        // --- 6. UI COMPONENTS ---
+        // --- 4. UI COMPONENTS ---
         
         const FilterDropdown = ({ label, options, value, onChange, iconName }) => {
             const [isOpen, setIsOpen] = useState(false);
@@ -266,7 +210,7 @@
                         </div>
                         {setExpandedId && (
                             <button className="p-2 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded-full transition-colors">
-                                {isExpanded ? <Icons.Minimize2 size={20}/> : <Icons.Maximize2 size={20}/>}
+                                {isExpanded ? <IconWrapper name="minimize-2" size={20}/> : <IconWrapper name="maximize-2" size={20}/>}
                             </button>
                         )}
                     </div>
@@ -294,7 +238,7 @@
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
-                    <div className={`bg-[#18181b] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto border border-gray-700 text-gray-200`}>
+                    <div className={`bg-[#18181b] rounded-2xl shadow-2xl w-full ${maxWidth} max-h-[90vh] overflow-y-auto border border-gray-700 text-gray-200`}>
                         <div className="flex justify-between items-center p-6 border-b border-gray-700 sticky top-0 bg-[#18181b] z-10">
                             <h2 className="text-xl font-bold text-white">{title}</h2>
                             <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded hover:bg-gray-700"><IconWrapper name="x" size={24} /></button>
@@ -306,15 +250,27 @@
         };
 
         const NavTab = ({ label, isActive, onClick }) => (
-            <button 
-                onClick={onClick}
-                className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${isActive ? 'bg-[#ccff00] text-black shadow-lg shadow-[#ccff00]/20' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-            >
-                {label}
-            </button>
+            <button onClick={onClick} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${isActive ? 'bg-[#ccff00] text-black shadow-lg shadow-[#ccff00]/20' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>{label}</button>
         );
 
-        // --- MAIN APP ---
+        // --- 5. FIREBASE & AUTH ---
+        let db, auth;
+        const initFirebase = (config) => {
+            try {
+                if (!firebase.apps.length) firebase.initializeApp(config);
+                auth = firebase.auth();
+                db = firebase.firestore();
+                return true;
+            } catch (e) { return false; }
+        };
+        let initialCloudState = false;
+        if (HARDCODED_CONFIG.apiKey) initialCloudState = initFirebase(HARDCODED_CONFIG);
+        else {
+            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);
+            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));
+        }
+
+        // --- 6. MAIN APP ---
         function UnplannedCIPTracker() {
             const [user, setUser] = useState(null);
             const [isCloudConnected, setIsCloudConnected] = useState(initialCloudState);
@@ -330,42 +286,40 @@
             const [searchTerm, setSearchTerm] = useState('');
             const [dateRange, setDateRange] = useState({ start: '2024-01-01', end: new Date().toISOString().split('T')[0] });
             
-            const [expandedWidget, setExpandedWidget] = useState(null);
             const [selectedEvent, setSelectedEvent] = useState(null);
-            const [selectedReason, setSelectedReason] = useState(null);
-            const [selectedFileIds, setSelectedFileIds] = useState(new Set());
-            const [eventLogSelection, setEventLogSelection] = useState(new Set());
-            const [fileToDelete, setFileToDelete] = useState(null);
-            
             const [showImportManager, setShowImportManager] = useState(false);
             const [showCloudSettings, setShowCloudSettings] = useState(false);
-            const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO) || null);
-
-            // Import internal state
+            
+            // Import
             const [isImporting, setIsImporting] = useState(false);
             const [importStep, setImportStep] = useState('');
             const [importProgress, setImportProgress] = useState(0);
             const [showPasteInput, setShowPasteInput] = useState(false);
             const [pastedData, setPastedData] = useState('');
-
-            // Deletion state
-            const [deleteStep, setDeleteStep] = useState('idle'); 
-            const [isDeleting, setIsDeleting] = useState(false);
-            
             const fileInputRef = useRef(null);
             const logoInputRef = useRef(null);
             const backupInputRef = useRef(null);
             const photoInputRef = useRef(null);
             const [selectedImage, setSelectedImage] = useState(null);
+            
+            // Selection & Settings
+            const [selectedFileIds, setSelectedFileIds] = useState(new Set());
+            const [eventLogSelection, setEventLogSelection] = useState(new Set());
+            const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO));
+            
+            // Delete State
+            const [deleteStep, setDeleteStep] = useState('idle'); 
+            const [isDeleting, setIsDeleting] = useState(false);
+            const [fileToDelete, setFileToDelete] = useState(null);
+            const [authError, setAuthError] = useState('');
+            const [projectIdInput, setProjectIdInput] = useState('');
+            const [apiKeyInput, setApiKeyInput] = useState('');
+            const [firebaseConfigInput, setFirebaseConfigInput] = useState('');
+            const [setupMode, setSetupMode] = useState('simple');
 
             // Pagination
             const [logPage, setLogPage] = useState(0);
             const ROWS_PER_PAGE = 50;
-
-            const [projectIdInput, setProjectIdInput] = useState('');
-            const [apiKeyInput, setApiKeyInput] = useState('');
-            const [setupMode, setSetupMode] = useState('simple');
-            const [authError, setAuthError] = useState('');
 
             const LINE_CONFIG = {
                 'Line A': { color: '#3b82f6', costPerHr: 1003.50, packsPerHr: 15000 },
@@ -442,6 +396,7 @@
                         continue;
                     }
                     
+                    // Find single event with max cost
                     let maxEvent = null;
                     let maxCost = 0;
                     
@@ -473,7 +428,7 @@
                 return Object.values(groups).sort((a,b) => b.cost - a.cost).slice(0, 10);
             }, [filteredData]);
 
-            // 3. TREND DATA
+            // 3. TREND DATA - FIT TO DASHBOARD
             const trendData = useMemo(() => {
                  const years = {};
                  const start = new Date(dateRange.start); const end = new Date(dateRange.end);
@@ -498,21 +453,96 @@
                  return Object.keys(years).sort().map(y => ({ year: y, data: years[y].sort((a,b)=>a.index-b.index) }));
             }, [filteredData, dateRange]);
 
-            // Handlers (Condensed for space)
+            // Handlers (Condensed)
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };
+            
+            // UPDATED IMPORT LOGIC WITH TIME DETECTION
             const processImport = async (name, txt) => {
-                setIsImporting(true); setImportProgress(0); setShowImportManager(false);
-                // ... Import logic (omitted for brevity in fix but assumed present)
-                setTimeout(() => { setIsImporting(false); alert("Import simulated"); }, 1000);
+                setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');
+                try {
+                    await new Promise(r => setTimeout(r, 500));
+                    const rows = txt.trim().split(/\r\n|\n|\r/);
+                    if(rows.length<2) throw new Error("Empty file");
+                    const headers = rows[0].split('\t').map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]/g,''));
+                    
+                    const colMap = {
+                        loc: headers.findIndex(h=>h.includes('locationname')),
+                        date: headers.findIndex(h=>h.includes('createddate')),
+                        startTime: headers.findIndex(h=>h.includes('starttime')||h.includes('start')),
+                        endTime: headers.findIndex(h=>h.includes('endtime')||h.includes('end')),
+                        prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),
+                        hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),
+                        run: headers.findIndex(h=>h.includes('runname')),
+                        shift: headers.findIndex(h=>h.includes('shiftname'))
+                    };
+                    
+                    const fileId=Date.now().toString();
+                    const parsed = [];
+                    
+                    const detectLine = (s) => { s=(s||'').toLowerCase(); if(s.match(/line\s*a|ln\.?\s*a| a /)) return 'Line A'; if(s.match(/line\s*b|ln\.?\s*b| b /)) return 'Line B'; if(s.match(/line\s*c|ln\.?\s*c| c /)) return 'Line C'; if(s.match(/line\s*d|ln\.?\s*d| d /)) return 'Line D'; return 'Unknown'; };
+                    const detectShift = (s) => { s=(s||'').toLowerCase(); if(s.includes('a shift')||s.includes('team a')||s.includes('modern family')) return 'A Shift'; if(s.includes('b shift')||s.includes('team b')) return 'B Shift'; if(s.includes('c shift')||s.includes('team c')) return 'C Shift'; if(s.includes('d shift')||s.includes('team d')) return 'D Shift'; return s||'Unknown'; };
+                    
+                    for(let i=1; i<rows.length; i++) {
+                        const c=rows[i].split('\t'); if(c.length<2) continue;
+                        
+                        // Extract Times
+                        let start = c[colMap.startTime] || c[colMap.date];
+                        let end = c[colMap.endTime];
+                        const dur = parseFloat(c[colMap.hrs])||0;
+
+                        // If no end time, calculate from duration if possible
+                        if(!end && start && dur) {
+                             const sDate = new Date(start);
+                             if(!isNaN(sDate)) {
+                                 const eDate = new Date(sDate.getTime() + dur * 60 * 60 * 1000);
+                                 end = eDate.toISOString();
+                             }
+                        }
+
+                        parsed.push({
+                            sourceFileId: fileId, 
+                            line: detectLine(c[colMap.loc]), 
+                            date: !isNaN(new Date(c[colMap.date]))?new Date(c[colMap.date]).toISOString().split('T')[0]:new Date().toISOString().split('T')[0],
+                            startTime: start || 'N/A',
+                            endTime: end || 'N/A',
+                            duration: dur.toFixed(2), 
+                            reason: c[colMap.prob]||'Unspecified', 
+                            product: c[colMap.run]||'', 
+                            shift: detectShift(c[colMap.shift]),
+                            notes: `Imported ${name}`, photos: []
+                        });
+                    }
+                    
+                    const meta={id:fileId, name, date:new Date().toLocaleDateString(), recordCount:parsed.length};
+                    if(isCloudConnected && user) {
+                        const b=db.batch(); await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').doc(fileId).set(meta);
+                        const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
+                        const BATCH_SIZE = 50;
+                        for(let i=0; i<parsed.length; i+=BATCH_SIZE) {
+                            const chunk = parsed.slice(i, i + BATCH_SIZE);
+                            await Promise.all(chunk.map(e => eventsRef.add(JSON.parse(JSON.stringify(e)))));
+                        }
+                    } else {
+                        const ids=parsed.map((e,i)=>({...e, id:(Date.now()+i).toString()}));
+                        setData(prev=>[...ids, ...prev]); setImportedFiles(prev=>[meta, ...prev]);
+                    }
+                    setImportStep('Done!'); setTimeout(() => { setIsImporting(false); setShowImportManager(true); }, 500);
+                } catch(e) { alert(e.message); setIsImporting(false); }
             };
+
             const handleMergeEvents = async () => { 
                 if(eventLogSelection.size < 2 || !confirm("Merge selected?")) return; 
                 const selected = data.filter(e => eventLogSelection.has(e.id)).sort((a,b) => new Date(b.date) - new Date(a.date));
                 const totalDur = selected.reduce((sum, e) => sum + parseFloat(e.duration||0), 0).toFixed(2);
                 const combinedNotes = selected.map(e => e.notes).filter(Boolean).join('\n---\n');
                 const combinedReasons = [...new Set(selected.map(e => e.reason))].join(' + ');
-                const mergedEvent = { ...selected[0], id: isCloudConnected ? null : Date.now().toString(), duration: totalDur, reason: combinedReasons, notes: `MERGED:\n${combinedNotes}` };
-                
+                const mergedEvent = { 
+                    ...selected[0], 
+                    id: isCloudConnected ? null : Date.now().toString(), 
+                    duration: totalDur, 
+                    reason: combinedReasons, 
+                    notes: `MERGED:\n${combinedNotes}`
+                };
                 if(isCloudConnected && user) {
                     const batch = db.batch();
                     const ref = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
@@ -532,9 +562,9 @@
             const handlePasteProcess = () => { if(!pastedData.trim()) return; processImport('Clipboard', pastedData); };
             const handleLogoUpload = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => { const base64 = reader.result; setAppLogo(base64); localStorage.setItem(STORAGE_KEY_LOGO, base64); }; reader.readAsDataURL(file); } };
             const handleAddNote = (id, val) => { setData(prev => prev.map(i => i.id === id ? {...i, notes: val} : i)); setSelectedEvent(p => ({...p, notes: val})); if(user && isCloudConnected) db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({notes: val}); };
-            const handleDeletePhoto = async (id, photoUrl) => { /*...*/ };
+            const handleDeletePhoto = async (id, photoUrl) => { const eventItem = data.find(i => i.id === id); if(!eventItem) return; const updatedPhotos = (eventItem.photos || []).filter(p => p !== photoUrl); const newData = data.map(item => item.id === id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if (selectedImage === photoUrl) setSelectedImage(updatedPhotos.length > 0 ? updatedPhotos[0] : null); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({ photos: updatedPhotos }); } };
             const handleAddPhotoClick = () => photoInputRef.current.click();
-            const handlePhotoChange = (event) => { /*...*/ };
+            const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };
             const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('confirm'); };
             const confirmMultiDelete = async () => { setIsDeleting(true); setTimeout(() => { setData(prev=>prev.filter(i=>!selectedFileIds.has(i.sourceFileId))); setImportedFiles(prev=>prev.filter(f=>!selectedFileIds.has(f.id))); setIsDeleting(false); setDeleteStep('idle'); setSelectedFileIds(new Set()); }, 1000); };
             const handleGoogleLogin = async () => { if(window.location.protocol === 'file:') { alert("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { alert(e.message); } };
@@ -550,7 +580,9 @@
             return (
                 <div className="min-h-screen bg-[#0f0f11] text-gray-200 font-sans flex flex-col p-4 md:p-6 gap-6">
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv"/>
-                    <input type="file" ref={logoInputRef} onChange={(e)=>{ if(e.target.files[0]) { const r=new FileReader(); r.onload=()=>{ setAppLogo(r.result); localStorage.setItem(STORAGE_KEY_LOGO, r.result); }; r.readAsDataURL(e.target.files[0]); } }} className="hidden" accept="image/*"/>
+                    <input type="file" ref={photoInputRef} onChange={handlePhotoChange} className="hidden" accept="image/*"/>
+                    <input type="file" ref={backupInputRef} onChange={handleRestoreBackup} className="hidden" accept=".json"/>
+                    <input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="hidden" accept="image/*" />
 
                     {/* HEADER */}
                     <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-[#18181b] p-4 rounded-3xl border border-gray-800 shadow-xl">
@@ -611,7 +643,7 @@
                                     {(highImpactAggregated || []).map((item, i) => (
                                         <div key={i} className="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors">
                                             <div>
-                                                <p className="text-xs font-bold text-white truncate max-w-[140px]" title={item.reason}>{item.reason}</p>
+                                                <p className="text-xs font-bold text-white break-words whitespace-normal max-w-[180px]" title={item.reason}>{item.reason}</p>
                                                 <p className="text-[10px] text-gray-500">{item.count} events</p>
                                             </div>
                                             <div className="text-right">
@@ -624,8 +656,8 @@
                         </div>
 
                         <div className="xl:col-span-3 grid grid-rows-[auto_1fr] gap-6">
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
-                                {/* FIXED: HEIGHT ON CARD TO PREVENT OVERFLOW */}
+                            {/* Fixed container height to prevent expansion */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[450px]">
                                 <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full overflow-hidden">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={monthlyMaxLoss}>
@@ -710,7 +742,7 @@
                                                              formatter={v => [formatCurrency(v), 'Cost']}
                                                          />
                                                          <Bar dataKey="cost" radius={[4,4,0,0]}>
-                                                             {yearGroup.data?.map((e, i) => <Cell key={i} fill={MONTH_COLORS[i % 12]} />)}
+                                                             {(yearGroup.data || []).map((e, i) => <Cell key={i} fill={MONTH_COLORS[i % 12]} />)}
                                                              <LabelList dataKey="cost" position="top" formatter={(v) => v > 0 ? `$${(v/1000).toFixed(0)}k` : ''} fill="#9ca3af" fontSize={9} />
                                                          </Bar>
                                                      </BarChart>
@@ -725,7 +757,6 @@
                     </div>
                     
                     {showCloudSettings && <Modal isOpen={showCloudSettings} onClose={() => setShowCloudSettings(false)} title="Settings"><div className="text-gray-400 text-sm text-center">Settings panel content...</div><div className="pt-4 text-center"><button onClick={handleClearConfig} className="text-xs text-red-500 hover:text-red-400 underline">Reset Cloud</button></div></Modal>}
-                    
                     {selectedEvent && (
                         <Modal isOpen={!!selectedEvent} onClose={() => setSelectedEvent(null)} title="Event Details">
                              <div className="grid grid-cols-2 gap-4 text-sm text-gray-300 mb-4">
@@ -740,6 +771,8 @@
 
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Line</span>{selectedEvent.line}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Date</span>{formatDate(selectedEvent.date)}</div>
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Start Time</span>{formatTime(selectedEvent.startTime)}</div>
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">End Time</span>{formatTime(selectedEvent.endTime)}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Shift</span>{selectedEvent.shift}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Duration</span>{selectedEvent.duration}h</div>
                                 <div className="col-span-2 bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Reason</span>{selectedEvent.reason}</div>
