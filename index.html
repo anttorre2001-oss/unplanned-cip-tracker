@@ -47,10 +47,6 @@
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-        .glass-panel-hover:hover {
-            background: rgba(39, 39, 42, 0.8);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
         
         body { background-color: #09090b; color: #e4e4e7; }
         .neon-text { color: #ccff00; }
@@ -119,7 +115,6 @@
         };
 
         // --- 4. UI COMPONENTS ---
-        
         const FilterDropdown = ({ label, options, value, onChange, iconName }) => {
             const [isOpen, setIsOpen] = useState(false);
             const [searchTerm, setSearchTerm] = useState('');
@@ -337,11 +332,13 @@
                 return () => { unsubEvents(); unsubFiles(); };
             }, [user, isCloudConnected]);
 
+            // Helper to extract unique products
             const PRODUCTS = useMemo(() => {
                 const s = new Set(data.map(d => d.product).filter(Boolean));
                 return ['All Products', ...Array.from(s).sort()];
             }, [data]);
 
+            // --- METRICS ---
             const filteredData = useMemo(() => {
                  return data.filter(item => {
                     const lineMatch = activeTab === 'All Lines' ? true : item.line === activeTab;
@@ -358,6 +355,7 @@
                  }).sort((a,b) => new Date(b.date) - new Date(a.date));
             }, [data, activeTab, activeShift, activeProduct, dateRange, searchTerm]);
 
+            // Pagination Logic
             const paginatedData = useMemo(() => {
                 const start = logPage * ROWS_PER_PAGE;
                 return filteredData.slice(start, start + ROWS_PER_PAGE);
@@ -376,6 +374,7 @@
                 return { totalCost: cost, totalPacks: packs, totalDuration: dur };
             }, [filteredData]);
 
+            // 1. MAX SINGLE LOSS PER MONTH (Reason Chart)
             const monthlyMaxLoss = useMemo(() => {
                 const year = new Date(dateRange.start).getFullYear();
                 const months = [];
@@ -408,6 +407,7 @@
                 return months;
             }, [data, dateRange]);
 
+            // 2. AGGREGATED HIGH IMPACT (Total Cost by Reason)
             const highImpactAggregated = useMemo(() => {
                 const groups = {};
                 filteredData.forEach(d => {
@@ -420,6 +420,7 @@
                 return Object.values(groups).sort((a,b) => b.cost - a.cost).slice(0, 10);
             }, [filteredData]);
 
+            // 3. TREND DATA - FIT TO DASHBOARD
             const trendData = useMemo(() => {
                  const years = {};
                  const start = new Date(dateRange.start); const end = new Date(dateRange.end);
@@ -447,7 +448,7 @@
             // Handlers
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };
             
-            // UPDATED IMPORT LOGIC WITH MINUTES CALCULATION
+            // UPDATED IMPORT LOGIC WITH MINUTES & END TIME CALCULATION
             const processImport = async (name, txt) => {
                 setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');
                 try {
@@ -456,12 +457,20 @@
                     if(rows.length<2) throw new Error("Empty file");
                     const headers = rows[0].split('\t').map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]/g,''));
                     
+                    // Updated Column Map to find Minutes
                     const colMap = {
                         loc: headers.findIndex(h=>h.includes('locationname')),
                         date: headers.findIndex(h=>h.includes('createddate')),
+                        // Time columns
+                        startTime: headers.findIndex(h=>h.includes('starttime')||h.includes('start')),
+                        endTime: headers.findIndex(h=>h.includes('endtime')||h.includes('end')),
+                        
                         prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),
                         hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),
-                        mins: headers.findIndex(h=>h.includes('sumofminutes')||h.includes('minutes')), // New Minute Column Detection
+                        
+                        // New: Minutes Column Detection
+                        mins: headers.findIndex(h=>h.includes('sumofminutes')||h.includes('minutes')||h.includes('min')),
+                        
                         run: headers.findIndex(h=>h.includes('runname')),
                         shift: headers.findIndex(h=>h.includes('shiftname'))
                     };
@@ -478,34 +487,44 @@
                         const dateStr = c[colMap.date];
                         let startStr = dateStr; 
                         
-                        // Duration in Minutes logic
+                        // Prefer explicit start time column if available
+                        if(colMap.startTime > -1 && c[colMap.startTime]) {
+                            startStr = c[colMap.startTime];
+                        } else if (!startStr && dateStr && dateStr.includes(':')) {
+                             startStr = dateStr; 
+                        }
+                        
+                        // Calculate Duration in Minutes
                         let durationMinutes = 0;
+                        // Priority 1: Minutes Column
                         if(colMap.mins > -1) {
                             durationMinutes = parseFloat(c[colMap.mins]) || 0;
                         } else {
-                             // Fallback to hours * 60 if mins column missing
+                             // Priority 2: Hours * 60
                              durationMinutes = (parseFloat(c[colMap.hrs]) || 0) * 60;
                         }
                         
                         let endStr = 'N/A';
+                        // Calculate End Time: Start Time + Duration Minutes
                         if(startStr && durationMinutes > 0) {
                              const sDate = new Date(startStr);
                              if(!isNaN(sDate.getTime())) {
                                  const eDate = new Date(sDate.getTime() + durationMinutes * 60000);
                                  endStr = eDate.toISOString();
-                                 startStr = sDate.toISOString();
+                                 
+                                 // If we only had a date string, normalize start to ISO too
+                                 if(!startStr.includes('T')) startStr = sDate.toISOString();
                              }
                         }
 
-                        // Use Hours for Cost Calculations
                         const durationHours = (durationMinutes / 60).toFixed(2);
 
                         parsed.push({
                             sourceFileId: fileId, 
                             line: detectLine(c[colMap.loc]), 
                             date: !isNaN(new Date(dateStr))?new Date(dateStr).toISOString().split('T')[0]:new Date().toISOString().split('T')[0],
-                            startTime: startStr,
-                            endTime: endStr,
+                            startTime: startStr || 'N/A',
+                            endTime: endStr,     
                             duration: durationHours, 
                             reason: c[colMap.prob]||'Unspecified', 
                             product: c[colMap.run]||'', 
@@ -667,7 +686,7 @@
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[450px]">
                                 <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full overflow-hidden">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={monthlyMaxLoss} margin={{top: 20, right: 20, left: 0, bottom: 0}}> {/* Added top margin for labels */}
+                                        <BarChart data={monthlyMaxLoss} margin={{top: 20, right: 20, left: 0, bottom: 0}}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)"/>
                                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill:'#525252', fontSize:10}} dy={10}/>
                                             <Tooltip 
@@ -781,7 +800,6 @@
 
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Line</span>{selectedEvent.line}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Date</span>{formatDate(selectedEvent.date)}</div>
-                                {/* Time fields added here */}
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Start Time</span>{formatTime(selectedEvent.startTime)}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">End Time</span>{formatTime(selectedEvent.endTime)}</div>
                                 <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Shift</span>{selectedEvent.shift}</div>
