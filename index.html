@@ -115,10 +115,11 @@
             if (!isNaN(date.getTime())) {
                 return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
             }
-            return timeString; // Return raw if parse fails
+            return timeString; 
         };
 
         // --- 4. UI COMPONENTS ---
+        
         const FilterDropdown = ({ label, options, value, onChange, iconName }) => {
             const [isOpen, setIsOpen] = useState(false);
             const [searchTerm, setSearchTerm] = useState('');
@@ -274,6 +275,7 @@
             const [user, setUser] = useState(null);
             const [isCloudConnected, setIsCloudConnected] = useState(initialCloudState);
             
+            // State
             const [activeTab, setActiveTab] = useState('All Lines'); 
             const [activeShift, setActiveShift] = useState('All Shifts');
             const [activeProduct, setActiveProduct] = useState('All Products');
@@ -288,6 +290,7 @@
             const [showImportManager, setShowImportManager] = useState(false);
             const [showCloudSettings, setShowCloudSettings] = useState(false);
             
+            // Import
             const [isImporting, setIsImporting] = useState(false);
             const [importStep, setImportStep] = useState('');
             const [importProgress, setImportProgress] = useState(0);
@@ -299,13 +302,14 @@
             const photoInputRef = useRef(null);
             const [selectedImage, setSelectedImage] = useState(null);
             
+            // Selection & Settings
             const [selectedFileIds, setSelectedFileIds] = useState(new Set());
             const [eventLogSelection, setEventLogSelection] = useState(new Set());
             const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO));
             
+            // Delete State
             const [deleteStep, setDeleteStep] = useState('idle'); 
             const [isDeleting, setIsDeleting] = useState(false);
-            const [deleteProgress, setDeleteProgress] = useState(0);
             const [fileToDelete, setFileToDelete] = useState(null);
             const [authError, setAuthError] = useState('');
             const [projectIdInput, setProjectIdInput] = useState('');
@@ -440,8 +444,10 @@
                  return Object.keys(years).sort().map(y => ({ year: y, data: years[y].sort((a,b)=>a.index-b.index) }));
             }, [filteredData, dateRange]);
 
+            // Handlers
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };
             
+            // UPDATED IMPORT LOGIC WITH MINUTES CALCULATION
             const processImport = async (name, txt) => {
                 setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');
                 try {
@@ -450,15 +456,12 @@
                     if(rows.length<2) throw new Error("Empty file");
                     const headers = rows[0].split('\t').map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]/g,''));
                     
-                    // IMPROVED TIME COLUMN DETECTION
                     const colMap = {
                         loc: headers.findIndex(h=>h.includes('locationname')),
                         date: headers.findIndex(h=>h.includes('createddate')),
-                        // Look for common time headers
-                        startTime: headers.findIndex(h=>['starttime','start_time','time','createdtime'].some(s=>h.includes(s))),
-                        endTime: headers.findIndex(h=>['endtime','end_time'].some(s=>h.includes(s))),
                         prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),
                         hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),
+                        mins: headers.findIndex(h=>h.includes('sumofminutes')||h.includes('minutes')), // New Minute Column Detection
                         run: headers.findIndex(h=>h.includes('runname')),
                         shift: headers.findIndex(h=>h.includes('shiftname'))
                     };
@@ -472,37 +475,38 @@
                     for(let i=1; i<rows.length; i++) {
                         const c=rows[i].split('\t'); if(c.length<2) continue;
                         
-                        // NEW: Better Time Extraction Logic
-                        let startStr = c[colMap.startTime];
                         const dateStr = c[colMap.date];
+                        let startStr = dateStr; 
                         
-                        // If no dedicated time column, try to get time from CreatedDate
-                        if (!startStr && dateStr && dateStr.includes(':')) {
-                             startStr = dateStr; // Use the full date-time string
+                        // Duration in Minutes logic
+                        let durationMinutes = 0;
+                        if(colMap.mins > -1) {
+                            durationMinutes = parseFloat(c[colMap.mins]) || 0;
+                        } else {
+                             // Fallback to hours * 60 if mins column missing
+                             durationMinutes = (parseFloat(c[colMap.hrs]) || 0) * 60;
                         }
                         
-                        const dur = parseFloat(c[colMap.hrs])||0;
-                        let endStr = c[colMap.endTime];
-
-                        // Calculate end time if missing
-                        if(!endStr && startStr && dur > 0) {
+                        let endStr = 'N/A';
+                        if(startStr && durationMinutes > 0) {
                              const sDate = new Date(startStr);
                              if(!isNaN(sDate.getTime())) {
-                                 // Add duration hours to start time
-                                 const eDate = new Date(sDate.getTime() + dur * 60 * 60 * 1000);
+                                 const eDate = new Date(sDate.getTime() + durationMinutes * 60000);
                                  endStr = eDate.toISOString();
-                                 // Normalize startStr if it was just a raw string
                                  startStr = sDate.toISOString();
                              }
                         }
+
+                        // Use Hours for Cost Calculations
+                        const durationHours = (durationMinutes / 60).toFixed(2);
 
                         parsed.push({
                             sourceFileId: fileId, 
                             line: detectLine(c[colMap.loc]), 
                             date: !isNaN(new Date(dateStr))?new Date(dateStr).toISOString().split('T')[0]:new Date().toISOString().split('T')[0],
-                            startTime: startStr || 'N/A', // Store collected start time
-                            endTime: endStr || 'N/A',     // Store calculated/collected end time
-                            duration: dur.toFixed(2), 
+                            startTime: startStr,
+                            endTime: endStr,
+                            duration: durationHours, 
                             reason: c[colMap.prob]||'Unspecified', 
                             product: c[colMap.run]||'', 
                             shift: detectShift(c[colMap.shift]),
@@ -534,17 +538,16 @@
                 const combinedNotes = selected.map(e => e.notes).filter(Boolean).join('\n---\n');
                 const combinedReasons = [...new Set(selected.map(e => e.reason))].join(' + ');
                 
-                // Combine start/end times for merged event
-                const firstEvent = selected[selected.length-1]; // Earliest
-                const lastEvent = selected[0]; // Latest
+                const firstEvent = selected[selected.length-1]; 
+                const lastEvent = selected[0]; 
                 
                 const mergedEvent = { 
                     ...selected[0], 
                     id: isCloudConnected ? null : Date.now().toString(), 
                     duration: totalDur, 
                     reason: combinedReasons, 
-                    startTime: firstEvent.startTime, // Keep earliest start
-                    endTime: lastEvent.endTime,     // Keep latest end
+                    startTime: firstEvent.startTime, 
+                    endTime: lastEvent.endTime,     
                     notes: `MERGED:\n${combinedNotes}`
                 };
                 
@@ -580,6 +583,7 @@
             const handleSaveConfig = () => { let config = { apiKey: apiKeyInput.trim(), authDomain: `${projectIdInput.trim()}.firebaseapp.com`, projectId: projectIdInput.trim() }; if(initFirebase(config)) { localStorage.setItem(STORAGE_KEY_FIREBASE_CONFIG, JSON.stringify(config)); setIsCloudConnected(true); alert("Connected!"); } else alert("Failed"); };
             const toggleFileSelection = (id) => { const newSet = new Set(selectedFileIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFileIds(newSet); };
             const toggleAllFiles = () => { if (selectedFileIds.size === importedFiles.length) setSelectedFileIds(new Set()); else setSelectedFileIds(new Set(importedFiles.map(f => f.id))); };
+            const confirmDeleteFile = () => {}; 
 
             return (
                 <div className="min-h-screen bg-[#0f0f11] text-gray-200 font-sans flex flex-col p-4 md:p-6 gap-6">
@@ -729,7 +733,6 @@
                                 </Card>
                             </div>
 
-                            {/* IMPROVED COST VELOCITY CHART - FLEXIBLE LAYOUT */}
                             <Card title="Cost Velocity (Trend)" iconName="trending-up" className="h-80 w-full overflow-hidden">
                                  <div className="w-full h-full flex overflow-x-auto custom-scrollbar pb-2">
                                      {(trendData || []).map((yearGroup) => (
