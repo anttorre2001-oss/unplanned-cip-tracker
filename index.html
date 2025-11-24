@@ -49,8 +49,6 @@
         }
         
         body { background-color: #09090b; color: #e4e4e7; }
-        .neon-text { color: #ccff00; }
-        .neon-bg { background-color: #ccff00; color: #000; }
     </style>
 </head>
 <body class="font-sans overflow-hidden selection:bg-[#ccff00] selection:text-black">
@@ -111,7 +109,7 @@
             if (!isNaN(date.getTime())) {
                 return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
             }
-            return timeString; 
+            return timeString; // Return raw if parse fails
         };
 
         // --- 4. UI COMPONENTS ---
