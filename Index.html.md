@@ -324,24 +324,6 @@
             const LINES = ['All Lines', ...Object.keys(LINE_CONFIG)];  
             const SHIFTS = ['All Shifts', 'A Shift', 'B Shift', 'C Shift', 'D Shift'];  
   
-            // 1. Load from LocalStorage on Startup if not cloud  
-            useEffect(() => {  
-                if (!isCloudConnected) {  
-                    const localData = localStorage.getItem(STORAGE_KEY_DATA);  
-                    const localFiles = localStorage.getItem(STORAGE_KEY_FILES);  
-                    if (localData) setData(JSON.parse(localData));  
-                    if (localFiles) setImportedFiles(JSON.parse(localFiles));  
-                }  
-            }, [isCloudConnected]);  
-  
-            // 2. Save to LocalStorage whenever data changes (if not cloud)  
-            useEffect(() => {  
-                if (!isCloudConnected) {  
-                    localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(data));  
-                    localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(importedFiles));  
-                }  
-            }, [data, importedFiles, isCloudConnected]);  
-  
             useEffect(() => { if (isCloudConnected && auth) return auth.onAuthStateChanged(setUser); }, [isCloudConnected]);  
             useEffect(() => {  
                 if (!user || !isCloudConnected || !db) return;  
@@ -460,7 +442,7 @@
             // Handlers  
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };  
               
-            // UPDATED IMPORT LOGIC WITH MINUTES & END TIME CALCULATION  
+            // UPDATED IMPORT LOGIC - STRICT START/END CALCULATION  
             const processImport = async (name, txt) => {  
                 setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');  
                 try {  
@@ -468,7 +450,6 @@
                       
                     const firstLine = txt.split('\n')[0];  
                     const delimiter = firstLine.includes('\t') ? '\t' : ',';  
-                      
                     const rows = txt.trim().split(/\r\n|\n|\r/);  
                     if(rows.length<2) throw new Error("Empty file");  
                       
@@ -476,12 +457,12 @@
                       
                     const colMap = {  
                         loc: headers.findIndex(h=>h.includes('locationname')),  
-                        date: headers.findIndex(h=>h.includes('createddate')), // Expected format: "6/23/2024 4:30:04 AM"  
-                        startTime: headers.findIndex(h=>h.includes('starttime')||h.includes('start')),  
-                        endTime: headers.findIndex(h=>h.includes('endtime')||h.includes('end')),  
-                        prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),  
+                        date: headers.findIndex(h=>h.includes('createddate')),  
+                        // STRICT MINUTE DETECTION  
+                        mins: headers.findIndex(h=>h.includes('sumofminutes') || h.includes('minuteslost')),  
+                        // Only use hours as fallback for cost calc  
                         hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),  
-                        mins: headers.findIndex(h=>h.includes('sumofminutes')||h.includes('minutes')||h.includes('min')),  
+                        prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),  
                         run: headers.findIndex(h=>h.includes('runname')),  
                         shift: headers.findIndex(h=>h.includes('shiftname'))  
                     };  
@@ -495,15 +476,11 @@
                     for(let i=1; i<rows.length; i++) {  
                         const c=rows[i].split(delimiter); if(c.length<2) continue;  
                           
-                        const dateStr = c[colMap.date];  
-                        let startStr = dateStr;   
+                        // START TIME from CreatedDate  
+                        const createdDateStr = c[colMap.date];   
+                        let startDateObj = new Date(createdDateStr);  
                           
-                        if(colMap.startTime > -1 && c[colMap.startTime]) {  
-                            startStr = c[colMap.startTime];  
-                        } else if (!startStr && dateStr && dateStr.includes(':')) {  
-                             startStr = dateStr;   
-                        }  
-                          
+                        // DURATION in Minutes (Primary Source)  
                         let durationMinutes = 0;  
                         if(colMap.mins > -1 && c[colMap.mins]) {  
                             durationMinutes = parseFloat(c[colMap.mins]) || 0;  
@@ -511,14 +488,10 @@
                             durationMinutes = (parseFloat(c[colMap.hrs]) || 0) * 60;  
                         }  
   
-                        let endStr = 'N/A';  
-                        if(startStr && durationMinutes > 0) {  
-                             const sDate = new Date(startStr);  
-                             if(!isNaN(sDate.getTime())) {  
-                                 const eDate = new Date(sDate.getTime() + durationMinutes * 60000);  
-                                 endStr = eDate.toISOString();  
-                                 if(!startStr.includes('T')) startStr = sDate.toISOString();  
-                             }  
+                        // END TIME Calculation  
+                        let endDateObj = null;  
+                        if (!isNaN(startDateObj.getTime()) && durationMinutes > 0) {  
+                             endDateObj = new Date(startDateObj.getTime() + durationMinutes * 60000);  
                         }  
   
                         const durationHours = (durationMinutes / 60).toFixed(2);  
@@ -526,9 +499,9 @@
                         parsed.push({  
                             sourceFileId: fileId,   
                             line: detectLine(c[colMap.loc]),   
-                            date: !isNaN(new Date(dateStr))?new Date(dateStr).toISOString().split('T')[0]:new Date().toISOString().split('T')[0],  
-                            startTime: startStr || 'N/A',  
-                            endTime: endStr,       
+                            date: !isNaN(startDateObj.getTime()) ? startDateObj.toISOString() : new Date().toISOString(), // Base date  
+                            startTime: !isNaN(startDateObj.getTime()) ? startDateObj.toISOString() : 'N/A',  
+                            endTime: endDateObj ? endDateObj.toISOString() : 'N/A',       
                             duration: durationHours,   
                             reason: c[colMap.prob]||'Unspecified',   
                             product: c[colMap.run]||'',   
@@ -597,40 +570,7 @@
             const handleAddPhotoClick = () => photoInputRef.current.click();  
             const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };  
             const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('confirm'); };  
-              
-            // Updated Delete Logic with Persistence  
-            const confirmMultiDelete = async () => {   
-                setIsDeleting(true);  
-                const targets = [...selectedFileIds];  
-                  
-                if(isCloudConnected && user) {  
-                     const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');  
-                     const filesRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files');  
-                       
-                     for(const fid of targets) {  
-                         const snaps = await eventsRef.where('sourceFileId', '==', fid).get();  
-                         const batch = db.batch();  
-                         snaps.forEach(doc => batch.delete(doc.ref));  
-                         await batch.commit();  
-                         await filesRef.doc(fid).delete();  
-                     }  
-                } else {  
-                     // Local Storage Delete  
-                     setData(prev => {  
-                        const newData = prev.filter(i => !selectedFileIds.has(i.sourceFileId));  
-                        return newData;  
-                     });  
-                     setImportedFiles(prev => {  
-                        const newFiles = prev.filter(f => !selectedFileIds.has(f.id));  
-                        return newFiles;  
-                     });  
-                }  
-                  
-                setIsDeleting(false);   
-                setDeleteStep('idle');   
-                setSelectedFileIds(new Set());   
-            };  
-  
+            const confirmMultiDelete = async () => { setIsDeleting(true); setTimeout(() => { setData(prev=>prev.filter(i=>!selectedFileIds.has(i.sourceFileId))); setImportedFiles(prev=>prev.filter(f=>!selectedFileIds.has(f.id))); setIsDeleting(false); setDeleteStep('idle'); setSelectedFileIds(new Set()); }, 1000); };  
             const handleGoogleLogin = async () => { if(window.location.protocol === 'file:') { alert("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { alert(e.message); } };  
             const handleLogout = async () => { await auth.signOut(); };  
             const handleClearConfig = () => { localStorage.removeItem(STORAGE_KEY_FIREBASE_CONFIG); setIsCloudConnected(false); setUser(null); };  
