@@ -1,0 +1,929 @@
+<!DOCTYPE html>  
+<html lang="en">  
+<head>  
+    <meta charset="UTF-8">  
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+    <title>Unplanned CIP Tracker</title>  
+      
+    <!-- Tailwind CSS -->  
+    <script src="https://cdn.tailwindcss.com"></script>  
+      
+    <!-- React & ReactDOM -->  
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>  
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>  
+      
+    <!-- Babel -->  
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>  
+      
+    <!-- Prop-Types -->  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>  
+      
+    <!-- Recharts -->  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.10.3/Recharts.min.js"></script>  
+      
+    <!-- Lucide Icons -->  
+    <script src="https://unpkg.com/lucide@0.292.0"></script>  
+  
+    <!-- Firebase SDKs -->  
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>  
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>  
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>  
+  
+    <style>  
+        /* Dark Mode Scrollbar */  
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }  
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }  
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.1); border-radius: 20px; }  
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.2); }  
+          
+        /* Animations */  
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }  
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }  
+          
+        /* Glassmorphism utilities */  
+        .glass-panel {  
+            background: rgba(24, 24, 27, 0.6);  
+            backdrop-filter: blur(12px);  
+            -webkit-backdrop-filter: blur(12px);  
+            border: 1px solid rgba(255, 255, 255, 0.08);  
+        }  
+          
+        body { background-color: #09090b; color: #e4e4e7; }  
+        .neon-text { color: #ccff00; }  
+        .neon-bg { background-color: #ccff00; color: #000; }  
+    </style>  
+</head>  
+<body class="font-sans overflow-hidden selection:bg-[#ccff00] selection:text-black">  
+    <div id="root" class="h-screen overflow-y-auto"></div>  
+  
+    <script type="text/babel">  
+        const { useState, useMemo, useRef, useEffect, useCallback } = React;  
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, LabelList } = Recharts;  
+  
+        // --- 1. CONFIGURATION ---  
+        const HARDCODED_CONFIG = {  
+            apiKey: "AIzaSyA26IAovNOtUSfxdRPaIHzoCzMrQCvuuCM",  
+            authDomain: "unplanned-cip-tracker.firebaseapp.com",  
+            projectId: "unplanned-cip-tracker",  
+            storageBucket: "unplanned-cip-tracker.firebasestorage.app",  
+            messagingSenderId: "187006943396",  
+            appId: "1:187006943396:web:1eb7932c09b4c5a384e631",  
+            measurementId: "G-ZXRKJNGLT2"  
+        };  
+  
+        const GLOBAL_APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'cip-tracker-v1';  
+        const STORAGE_KEY_FIREBASE_CONFIG = 'cip_tracker_firebase_config';  
+        const STORAGE_KEY_DATA = 'cip_tracker_data';  
+        const STORAGE_KEY_FILES = 'cip_tracker_files';  
+        const STORAGE_KEY_LOGO = 'cip_tracker_logo';   
+  
+        const CHART_COLORS = ['#ccff00', '#3b82f6', '#a855f7', '#ef4444', '#f97316', '#10b981'];   
+        const MONTH_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];  
+  
+        // --- 2. ICONS & WRAPPERS ---  
+        const IconWrapper = ({ name, size = 20, className, color = 'currentColor' }) => {  
+            const ref = useRef(null);  
+            useEffect(() => {  
+                if (ref.current && window.lucide) {  
+                    const i = document.createElement('i');  
+                    i.setAttribute('data-lucide', name);  
+                    ref.current.innerHTML = '';  
+                    ref.current.appendChild(i);  
+                    window.lucide.createIcons({ root: ref.current, nameAttr: 'data-lucide', attrs: { width: size, height: size, class: className, stroke: color } });  
+                }  
+            }, [name, size, className]);  
+            return <span ref={ref} className="inline-flex items-center justify-center"></span>;  
+        };  
+  
+        // --- 3. HELPERS ---  
+        const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);  
+        const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);  
+        const formatDate = (dateString) => {  
+            if (!dateString) return '';  
+            const date = new Date(dateString);  
+            if (isNaN(date.getTime())) return dateString;   
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });  
+        };  
+          
+        const formatTime = (timeString) => {  
+            if (!timeString || timeString === 'N/A') return 'N/A';  
+            const date = new Date(timeString);  
+            if (!isNaN(date.getTime())) {  
+                return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });  
+            }  
+            return timeString;   
+        };  
+  
+        // --- 4. UI COMPONENTS ---  
+        const FilterDropdown = ({ label, options, value, onChange, iconName }) => {  
+            const [isOpen, setIsOpen] = useState(false);  
+            const [searchTerm, setSearchTerm] = useState('');  
+            const wrapperRef = useRef(null);  
+  
+            useEffect(() => {  
+                function handleClickOutside(event) {  
+                    if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {  
+                        setIsOpen(false);  
+                    }  
+                }  
+                document.addEventListener("mousedown", handleClickOutside);  
+                return () => document.removeEventListener("mousedown", handleClickOutside);  
+            }, [wrapperRef]);  
+  
+            const safeOptions = Array.isArray(options) ? options : [];  
+            const filteredOptions = safeOptions.filter(opt => (opt || '').toLowerCase().includes(searchTerm.toLowerCase()));  
+  
+            return (  
+                <div className="relative" ref={wrapperRef}>  
+                    <button   
+                        onClick={() => setIsOpen(!isOpen)}  
+                        className={`flex items-center gap-2 px-4 py-2.5 bg-[#18181b] border ${isOpen ? 'border-[#ccff00] text-white' : 'border-gray-800 text-gray-400'} rounded-xl text-xs font-bold transition-all min-w-[160px] justify-between hover:border-gray-600 hover:text-white shadow-sm`}  
+                    >  
+                        <div className="flex items-center gap-2 truncate">  
+                            <IconWrapper name={iconName} size={14} />  
+                            <span className="truncate max-w-[100px]">{value || label}</span>  
+                        </div>  
+                        <IconWrapper name="chevron-down" size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>  
+                    </button>  
+  
+                    {isOpen && (  
+                        <div className="absolute top-full left-0 mt-2 w-64 bg-[#18181b] border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-fade-in">  
+                            <div className="p-2 border-b border-gray-700 bg-[#0f0f11]">  
+                                <input   
+                                    type="text"   
+                                    placeholder="Search..."   
+                                    className="w-full bg-[#27272a] text-white text-xs p-2 rounded-lg outline-none focus:ring-1 focus:ring-[#ccff00]"  
+                                    value={searchTerm}  
+                                    onChange={e => setSearchTerm(e.target.value)}  
+                                    autoFocus  
+                                />  
+                            </div>  
+                            <div className="max-h-60 overflow-y-auto custom-scrollbar p-1">  
+                                {filteredOptions.length > 0 ? filteredOptions.map(opt => (  
+                                    <button   
+                                        key={opt}  
+                                        onClick={() => { onChange(opt); setIsOpen(false); setSearchTerm(''); }}  
+                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs mb-1 transition-colors ${value === opt ? 'bg-[#ccff00] text-black font-bold' : 'text-gray-300 hover:bg-white/10'}`}  
+                                    >  
+                                        {opt}  
+                                    </button>  
+                                )) : <div className="p-3 text-xs text-gray-500 text-center">No results</div>}  
+                            </div>  
+                        </div>  
+                    )}  
+                </div>  
+            );  
+        };  
+  
+        const Card = ({ title, children, iconName, className = "", action }) => (  
+            <div className={`glass-panel rounded-3xl p-5 flex flex-col transition-all duration-300 hover:shadow-lg hover:shadow-[#ccff00]/5 border border-gray-800 bg-[#18181b] ${className}`}>  
+                <div className="flex justify-between items-start mb-4 flex-shrink-0">  
+                    <div className="flex items-center gap-2">  
+                        <div className="text-gray-400"><IconWrapper name={iconName} size={18}/></div>  
+                        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">{title}</h3>  
+                    </div>  
+                    {action}  
+                </div>  
+                <div className="flex-1 min-h-0 relative overflow-hidden">  
+                    {children}  
+                </div>  
+            </div>  
+        );  
+  
+        const DashboardWidget = ({ id, title, children, expandedId, setExpandedId, icon, colorClass = "text-gray-900", className = "" }) => {  
+            const isExpanded = expandedId === id;  
+            const containerClasses = isExpanded   
+                ? "fixed inset-4 z-40 bg-[#18181b] rounded-3xl shadow-2xl flex flex-col transition-all duration-300 border border-gray-700"   
+                : `relative bg-[#18181b] p-6 rounded-3xl shadow-sm border border-gray-800 flex flex-col transition-all duration-300 hover:shadow-md ${className}`;  
+  
+            return (  
+                <div className={containerClasses}>  
+                    <div className={`flex justify-between items-center mb-4 cursor-pointer group ${isExpanded ? 'p-6 border-b border-gray-700' : ''}`} onClick={() => setExpandedId && setExpandedId(isExpanded ? null : id)}>  
+                        <div className="flex items-center gap-3">  
+                            {icon && <div className={`transition-transform group-hover:scale-110 ${colorClass}`}>{icon}</div>}  
+                            <h3 className={`text-lg font-bold group-hover:text-blue-400 transition-colors text-gray-200`}>{title}</h3>  
+                        </div>  
+                        {setExpandedId && (  
+                            <button className="p-2 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded-full transition-colors">  
+                                {isExpanded ? <IconWrapper name="minimize-2" size={20}/> : <IconWrapper name="maximize-2" size={20}/>}  
+                            </button>  
+                        )}  
+                    </div>  
+                    <div className={`flex-1 min-h-0 relative ${isExpanded ? 'p-6' : ''}`}>{children}</div>  
+                </div>  
+            );  
+        };  
+  
+        const SidePanel = ({ isOpen, onClose, title, children }) => {  
+            return (  
+                <>  
+                    <div className={`fixed inset-0 z-50 bg-black/20 backdrop-blur-[2px] transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={onClose}/>  
+                    <div className={`fixed top-2 bottom-2 right-2 w-[480px] max-w-[90vw] bg-[#18181b] rounded-2xl shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col overflow-hidden border border-gray-700 ${isOpen ? 'translate-x-0' : 'translate-x-[110%]'}`}>  
+                        <div className="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-800/80 backdrop-blur-sm sticky top-0 z-10">  
+                             <h2 className="font-bold text-lg text-gray-200">{title}</h2>  
+                             <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full transition-colors"><IconWrapper name="x" size={20}/></button>  
+                        </div>  
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">{children}</div>  
+                    </div>  
+                </>  
+            )  
+        };  
+  
+        const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-3xl" }) => {  
+            if (!isOpen) return null;  
+            return (  
+                <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">  
+                    <div className={`bg-[#18181b] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto border border-gray-700 text-gray-200`}>  
+                        <div className="flex justify-between items-center p-6 border-b border-gray-700 sticky top-0 bg-[#18181b] z-10">  
+                            <h2 className="text-xl font-bold text-white">{title}</h2>  
+                            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded hover:bg-gray-700"><IconWrapper name="x" size={24} /></button>  
+                        </div>  
+                        <div className="p-6 text-gray-300">{children}</div>  
+                    </div>  
+                </div>  
+            );  
+        };  
+  
+        const NavTab = ({ label, isActive, onClick }) => (  
+            <button onClick={onClick} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${isActive ? 'bg-[#ccff00] text-black shadow-lg shadow-[#ccff00]/20' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>{label}</button>  
+        );  
+  
+        // --- 5. FIREBASE & AUTH ---  
+        let db, auth;  
+        const initFirebase = (config) => {  
+            try {  
+                if (!firebase.apps.length) firebase.initializeApp(config);  
+                auth = firebase.auth();  
+                db = firebase.firestore();  
+                return true;  
+            } catch (e) { return false; }  
+        };  
+        let initialCloudState = false;  
+        if (HARDCODED_CONFIG.apiKey) initialCloudState = initFirebase(HARDCODED_CONFIG);  
+        else {  
+            const savedConfig = localStorage.getItem(STORAGE_KEY_FIREBASE_CONFIG);  
+            if (savedConfig) initialCloudState = initFirebase(JSON.parse(savedConfig));  
+        }  
+  
+        // --- 6. MAIN APP ---  
+        function UnplannedCIPTracker() {  
+            const [user, setUser] = useState(null);  
+            const [isCloudConnected, setIsCloudConnected] = useState(initialCloudState);  
+              
+            // State  
+            const [activeTab, setActiveTab] = useState('All Lines');   
+            const [activeShift, setActiveShift] = useState('All Shifts');  
+            const [activeProduct, setActiveProduct] = useState('All Products');  
+            const [currentView, setCurrentView] = useState('Overview');  
+  
+            const [data, setData] = useState([]);  
+            const [importedFiles, setImportedFiles] = useState([]);   
+            const [searchTerm, setSearchTerm] = useState('');  
+            const [dateRange, setDateRange] = useState({ start: '2024-01-01', end: new Date().toISOString().split('T')[0] });  
+              
+            const [selectedEvent, setSelectedEvent] = useState(null);  
+            const [showImportManager, setShowImportManager] = useState(false);  
+            const [showCloudSettings, setShowCloudSettings] = useState(false);  
+              
+            // Import  
+            const [isImporting, setIsImporting] = useState(false);  
+            const [importStep, setImportStep] = useState('');  
+            const [importProgress, setImportProgress] = useState(0);  
+            const [showPasteInput, setShowPasteInput] = useState(false);  
+            const [pastedData, setPastedData] = useState('');  
+            const fileInputRef = useRef(null);  
+            const logoInputRef = useRef(null);  
+            const backupInputRef = useRef(null);  
+            const photoInputRef = useRef(null);  
+            const [selectedImage, setSelectedImage] = useState(null);  
+              
+            // Selection & Settings  
+            const [selectedFileIds, setSelectedFileIds] = useState(new Set());  
+            const [eventLogSelection, setEventLogSelection] = useState(new Set());  
+            const [appLogo, setAppLogo] = useState(localStorage.getItem(STORAGE_KEY_LOGO));  
+              
+            // Delete State  
+            const [deleteStep, setDeleteStep] = useState('idle');   
+            const [isDeleting, setIsDeleting] = useState(false);  
+            const [fileToDelete, setFileToDelete] = useState(null);  
+            const [authError, setAuthError] = useState('');  
+            const [projectIdInput, setProjectIdInput] = useState('');  
+            const [apiKeyInput, setApiKeyInput] = useState('');  
+  
+            // Pagination  
+            const [logPage, setLogPage] = useState(0);  
+            const ROWS_PER_PAGE = 50;  
+  
+            const LINE_CONFIG = {  
+                'Line A': { color: '#3b82f6', costPerHr: 1003.50, packsPerHr: 15000 },  
+                'Line B': { color: '#06b6d4', costPerHr: 1003.50, packsPerHr: 15000 },  
+                'Line C': { color: '#f97316', costPerHr: 1299.33, packsPerHr: 6000 },  
+                'Line D': { color: '#ef4444', costPerHr: 1299.33, packsPerHr: 6000 },  
+            };  
+            const UNKNOWN_LINE = { color: '#9ca3af', costPerHr: 0, packsPerHr: 0 };  
+            const LINES = ['All Lines', ...Object.keys(LINE_CONFIG)];  
+            const SHIFTS = ['All Shifts', 'A Shift', 'B Shift', 'C Shift', 'D Shift'];  
+  
+            // 1. Load from LocalStorage on Startup if not cloud  
+            useEffect(() => {  
+                if (!isCloudConnected) {  
+                    const localData = localStorage.getItem(STORAGE_KEY_DATA);  
+                    const localFiles = localStorage.getItem(STORAGE_KEY_FILES);  
+                    if (localData) setData(JSON.parse(localData));  
+                    if (localFiles) setImportedFiles(JSON.parse(localFiles));  
+                }  
+            }, [isCloudConnected]);  
+  
+            // 2. Save to LocalStorage whenever data changes (if not cloud)  
+            useEffect(() => {  
+                if (!isCloudConnected) {  
+                    localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(data));  
+                    localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(importedFiles));  
+                }  
+            }, [data, importedFiles, isCloudConnected]);  
+  
+            useEffect(() => { if (isCloudConnected && auth) return auth.onAuthStateChanged(setUser); }, [isCloudConnected]);  
+            useEffect(() => {  
+                if (!user || !isCloudConnected || !db) return;  
+                const unsubEvents = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').onSnapshot(snap => setData(snap.docs.map(d => ({ id: d.id, ...d.data() }))));  
+                const unsubFiles = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').orderBy('date', 'desc').onSnapshot(snap => setImportedFiles(snap.docs.map(d => ({ id: d.id, ...d.data() }))));  
+                return () => { unsubEvents(); unsubFiles(); };  
+            }, [user, isCloudConnected]);  
+  
+            const PRODUCTS = useMemo(() => {  
+                const s = new Set(data.map(d => d.product).filter(Boolean));  
+                return ['All Products', ...Array.from(s).sort()];  
+            }, [data]);  
+  
+            const filteredData = useMemo(() => {  
+                 return data.filter(item => {  
+                    const lineMatch = activeTab === 'All Lines' ? true : item.line === activeTab;  
+                    const shiftMatch = activeShift === 'All Shifts' || item.shift === activeShift;  
+                    const prodMatch = activeProduct === 'All Products' || item.product === activeProduct;  
+                      
+                    const itemDate = new Date(item.date);  
+                    const start = new Date(dateRange.start); const end = new Date(dateRange.end);  
+                    start.setHours(0,0,0,0); end.setHours(0,0,0,0); itemDate.setHours(0,0,0,0);  
+                    const dateMatch = itemDate >= start && itemDate <= end;  
+                      
+                    const searchMatch = !searchTerm || (item.reason+item.notes).toLowerCase().includes(searchTerm.toLowerCase());  
+                    return lineMatch && shiftMatch && prodMatch && dateMatch && searchMatch;  
+                 }).sort((a,b) => new Date(b.date) - new Date(a.date));  
+            }, [data, activeTab, activeShift, activeProduct, dateRange, searchTerm]);  
+  
+            const paginatedData = useMemo(() => {  
+                const start = logPage * ROWS_PER_PAGE;  
+                return filteredData.slice(start, start + ROWS_PER_PAGE);  
+            }, [filteredData, logPage]);  
+  
+            useEffect(() => setLogPage(0), [activeTab, activeShift, activeProduct, dateRange, searchTerm]);  
+  
+            const metrics = useMemo(() => {  
+                let cost=0, packs=0, dur=0;  
+                filteredData.forEach(item => {  
+                    const cfg = LINE_CONFIG[item.line] || UNKNOWN_LINE;  
+                    const d = parseFloat(item.duration) || 0;  
+                    const c = d * cfg.costPerHr;  
+                    cost += c; packs += d * cfg.packsPerHr; dur += d;  
+                });  
+                return { totalCost: cost, totalPacks: packs, totalDuration: dur };  
+            }, [filteredData]);  
+  
+            const monthlyMaxLoss = useMemo(() => {  
+                const year = new Date(dateRange.start).getFullYear();  
+                const months = [];  
+                for(let i=0; i<12; i++) {  
+                    const mData = data.filter(d => {  
+                        const date = new Date(d.date);  
+                        return date.getMonth() === i && date.getFullYear() === year;  
+                    });  
+                      
+                    if(mData.length === 0) {  
+                        months.push({ name: new Date(year,i).toLocaleDateString('en-US',{month:'short'}), cost: 0, reason: '' });  
+                        continue;  
+                    }  
+                      
+                    let maxEvent = null;  
+                    let maxCost = 0;  
+                      
+                    mData.forEach(d => {  
+                         const cfg = LINE_CONFIG[d.line] || UNKNOWN_LINE;  
+                         const c = (parseFloat(d.duration)||0) * cfg.costPerHr;  
+                         if(c > maxCost) { maxCost = c; maxEvent = d; }  
+                    });  
+                      
+                    months.push({  
+                        name: new Date(year,i).toLocaleDateString('en-US',{month:'short'}),  
+                        cost: maxCost,  
+                        reason: maxEvent ? maxEvent.reason : ''  
+                    });  
+                }  
+                return months;  
+            }, [data, dateRange]);  
+  
+            const highImpactAggregated = useMemo(() => {  
+                const groups = {};  
+                filteredData.forEach(d => {  
+                    const cfg = LINE_CONFIG[d.line] || UNKNOWN_LINE;  
+                    const c = (parseFloat(d.duration)||0) * cfg.costPerHr;  
+                    if(!groups[d.reason]) groups[d.reason] = { reason: d.reason, cost: 0, count: 0 };  
+                    groups[d.reason].cost += c;  
+                    groups[d.reason].count += 1;  
+                });  
+                return Object.values(groups).sort((a,b) => b.cost - a.cost).slice(0, 10);  
+            }, [filteredData]);  
+  
+            const trendData = useMemo(() => {  
+                 const years = {};  
+                 const start = new Date(dateRange.start); const end = new Date(dateRange.end);  
+                 let ptr = new Date(start); ptr.setDate(1);  
+                 while(ptr <= end || (ptr.getMonth()===end.getMonth() && ptr.getFullYear()===end.getFullYear())) {  
+                     const y = ptr.getFullYear();  
+                     if(!years[y]) years[y] = [];  
+                     const mName = ptr.toLocaleDateString('en-US', {month:'short'});  
+                     if(!years[y].find(m => m.name === mName)) years[y].push({ name: mName, cost: 0, index: ptr.getMonth() });  
+                     ptr.setMonth(ptr.getMonth()+1);  
+                 }  
+                 filteredData.forEach(item => {  
+                     const d = new Date(item.date);  
+                     if(years[d.getFullYear()]) {  
+                         const m = years[d.getFullYear()].find(m => m.index === d.getMonth());  
+                         if(m) {  
+                             const cfg = LINE_CONFIG[item.line] || UNKNOWN_LINE;  
+                             m.cost += parseFloat(item.duration) * cfg.costPerHr;  
+                         }  
+                     }  
+                 });  
+                 return Object.keys(years).sort().map(y => ({ year: y, data: years[y].sort((a,b)=>a.index-b.index) }));  
+            }, [filteredData, dateRange]);  
+  
+            // Handlers  
+            const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };  
+              
+            // UPDATED IMPORT LOGIC WITH MINUTES & END TIME CALCULATION  
+            const processImport = async (name, txt) => {  
+                setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');  
+                try {  
+                    await new Promise(r => setTimeout(r, 500));  
+                      
+                    const firstLine = txt.split('\n')[0];  
+                    const delimiter = firstLine.includes('\t') ? '\t' : ',';  
+                      
+                    const rows = txt.trim().split(/\r\n|\n|\r/);  
+                    if(rows.length<2) throw new Error("Empty file");  
+                      
+                    const headers = rows[0].split(delimiter).map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]/g,''));  
+                      
+                    const colMap = {  
+                        loc: headers.findIndex(h=>h.includes('locationname')),  
+                        date: headers.findIndex(h=>h.includes('createddate')), // Expected format: "6/23/2024 4:30:04 AM"  
+                        startTime: headers.findIndex(h=>h.includes('starttime')||h.includes('start')),  
+                        endTime: headers.findIndex(h=>h.includes('endtime')||h.includes('end')),  
+                        prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),  
+                        hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),  
+                        mins: headers.findIndex(h=>h.includes('sumofminutes')||h.includes('minutes')||h.includes('min')),  
+                        run: headers.findIndex(h=>h.includes('runname')),  
+                        shift: headers.findIndex(h=>h.includes('shiftname'))  
+                    };  
+                      
+                    const fileId=Date.now().toString();  
+                    const parsed = [];  
+                      
+                    const detectLine = (s) => { s=(s||'').toLowerCase(); if(s.match(/line\s*a|ln\.?\s*a| a /)) return 'Line A'; if(s.match(/line\s*b|ln\.?\s*b| b /)) return 'Line B'; if(s.match(/line\s*c|ln\.?\s*c| c /)) return 'Line C'; if(s.match(/line\s*d|ln\.?\s*d| d /)) return 'Line D'; return 'Unknown'; };  
+                    const detectShift = (s) => { s=(s||'').toLowerCase(); if(s.includes('a shift')||s.includes('team a')||s.includes('modern family')) return 'A Shift'; if(s.includes('b shift')||s.includes('team b')) return 'B Shift'; if(s.includes('c shift')||s.includes('team c')) return 'C Shift'; if(s.includes('d shift')||s.includes('team d')) return 'D Shift'; return s||'Unknown'; };  
+                      
+                    for(let i=1; i<rows.length; i++) {  
+                        const c=rows[i].split(delimiter); if(c.length<2) continue;  
+                          
+                        const dateStr = c[colMap.date];  
+                        let startStr = dateStr;   
+                          
+                        if(colMap.startTime > -1 && c[colMap.startTime]) {  
+                            startStr = c[colMap.startTime];  
+                        } else if (!startStr && dateStr && dateStr.includes(':')) {  
+                             startStr = dateStr;   
+                        }  
+                          
+                        let durationMinutes = 0;  
+                        if(colMap.mins > -1 && c[colMap.mins]) {  
+                            durationMinutes = parseFloat(c[colMap.mins]) || 0;  
+                        } else if (colMap.hrs > -1) {  
+                            durationMinutes = (parseFloat(c[colMap.hrs]) || 0) * 60;  
+                        }  
+  
+                        let endStr = 'N/A';  
+                        if(startStr && durationMinutes > 0) {  
+                             const sDate = new Date(startStr);  
+                             if(!isNaN(sDate.getTime())) {  
+                                 const eDate = new Date(sDate.getTime() + durationMinutes * 60000);  
+                                 endStr = eDate.toISOString();  
+                                 if(!startStr.includes('T')) startStr = sDate.toISOString();  
+                             }  
+                        }  
+  
+                        const durationHours = (durationMinutes / 60).toFixed(2);  
+  
+                        parsed.push({  
+                            sourceFileId: fileId,   
+                            line: detectLine(c[colMap.loc]),   
+                            date: !isNaN(new Date(dateStr))?new Date(dateStr).toISOString().split('T')[0]:new Date().toISOString().split('T')[0],  
+                            startTime: startStr || 'N/A',  
+                            endTime: endStr,       
+                            duration: durationHours,   
+                            reason: c[colMap.prob]||'Unspecified',   
+                            product: c[colMap.run]||'',   
+                            shift: detectShift(c[colMap.shift]),  
+                            notes: `Imported ${name}`, photos: []  
+                        });  
+                    }  
+                      
+                    const meta={id:fileId, name, date:new Date().toLocaleDateString(), recordCount:parsed.length};  
+                    if(isCloudConnected && user) {  
+                        const b=db.batch(); await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').doc(fileId).set(meta);  
+                        const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');  
+                        const BATCH_SIZE = 50;  
+                        for(let i=0; i<parsed.length; i+=BATCH_SIZE) {  
+                            const chunk = parsed.slice(i, i + BATCH_SIZE);  
+                            await Promise.all(chunk.map(e => eventsRef.add(JSON.parse(JSON.stringify(e)))));  
+                        }  
+                    } else {  
+                        const ids=parsed.map((e,i)=>({...e, id:(Date.now()+i).toString()}));  
+                        setData(prev=>[...ids, ...prev]); setImportedFiles(prev=>[meta, ...prev]);  
+                    }  
+                    setImportStep('Done!'); setTimeout(() => { setIsImporting(false); setShowImportManager(true); }, 500);  
+                } catch(e) { alert(e.message); setIsImporting(false); }  
+            };  
+  
+            const handleMergeEvents = async () => {   
+                if(eventLogSelection.size < 2 || !confirm("Merge selected?")) return;   
+                const selected = data.filter(e => eventLogSelection.has(e.id)).sort((a,b) => new Date(b.date) - new Date(a.date));  
+                const totalDur = selected.reduce((sum, e) => sum + parseFloat(e.duration||0), 0).toFixed(2);  
+                const combinedNotes = selected.map(e => e.notes).filter(Boolean).join('\n---\n');  
+                const combinedReasons = [...new Set(selected.map(e => e.reason))].join(' + ');  
+                  
+                const firstEvent = selected[selected.length-1];   
+                const lastEvent = selected[0];   
+                  
+                const mergedEvent = {   
+                    ...selected[0],   
+                    id: isCloudConnected ? null : Date.now().toString(),   
+                    duration: totalDur,   
+                    reason: combinedReasons,   
+                    startTime: firstEvent.startTime,   
+                    endTime: lastEvent.endTime,       
+                    notes: `MERGED:\n${combinedNotes}`  
+                };  
+                  
+                if(isCloudConnected && user) {  
+                    const batch = db.batch();  
+                    const ref = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');  
+                    selected.forEach(e => batch.delete(ref.doc(e.id)));  
+                    const newDoc = ref.doc();  
+                    batch.set(newDoc, {...mergedEvent, id: newDoc.id});  
+                    await batch.commit();  
+                } else {  
+                    const remaining = data.filter(e => !eventLogSelection.has(e.id));  
+                    setData([mergedEvent, ...remaining]);  
+                }  
+                setEventLogSelection(new Set());  
+            };  
+            const toggleEventSelection = (id) => { const n = new Set(eventLogSelection); if(n.has(id)) n.delete(id); else n.add(id); setEventLogSelection(n); };  
+            const toggleAllEvents = () => { if(eventLogSelection.size === filteredData.length) setEventLogSelection(new Set()); else setEventLogSelection(new Set(filteredData.map(d=>d.id))); };  
+            const handleUploadNewClick = () => fileInputRef.current.click();  
+            const handlePasteProcess = () => { if(!pastedData.trim()) return; processImport('Clipboard', pastedData); };  
+            const handleLogoUpload = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => { const base64 = reader.result; setAppLogo(base64); localStorage.setItem(STORAGE_KEY_LOGO, base64); }; reader.readAsDataURL(file); } };  
+            const handleAddNote = (id, val) => { setData(prev => prev.map(i => i.id === id ? {...i, notes: val} : i)); setSelectedEvent(p => ({...p, notes: val})); if(user && isCloudConnected) db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({notes: val}); };  
+            const handleDeletePhoto = async (id, photoUrl) => { const eventItem = data.find(i => i.id === id); if(!eventItem) return; const updatedPhotos = (eventItem.photos || []).filter(p => p !== photoUrl); const newData = data.map(item => item.id === id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if (selectedImage === photoUrl) setSelectedImage(updatedPhotos.length > 0 ? updatedPhotos[0] : null); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(id).update({ photos: updatedPhotos }); } };  
+            const handleAddPhotoClick = () => photoInputRef.current.click();  
+            const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };  
+            const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('confirm'); };  
+              
+            // Updated Delete Logic with Persistence  
+            const confirmMultiDelete = async () => {   
+                setIsDeleting(true);  
+                const targets = [...selectedFileIds];  
+                  
+                if(isCloudConnected && user) {  
+                     const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');  
+                     const filesRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files');  
+                       
+                     for(const fid of targets) {  
+                         const snaps = await eventsRef.where('sourceFileId', '==', fid).get();  
+                         const batch = db.batch();  
+                         snaps.forEach(doc => batch.delete(doc.ref));  
+                         await batch.commit();  
+                         await filesRef.doc(fid).delete();  
+                     }  
+                } else {  
+                     // Local Storage Delete  
+                     setData(prev => {  
+                        const newData = prev.filter(i => !selectedFileIds.has(i.sourceFileId));  
+                        return newData;  
+                     });  
+                     setImportedFiles(prev => {  
+                        const newFiles = prev.filter(f => !selectedFileIds.has(f.id));  
+                        return newFiles;  
+                     });  
+                }  
+                  
+                setIsDeleting(false);   
+                setDeleteStep('idle');   
+                setSelectedFileIds(new Set());   
+            };  
+  
+            const handleGoogleLogin = async () => { if(window.location.protocol === 'file:') { alert("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { alert(e.message); } };  
+            const handleLogout = async () => { await auth.signOut(); };  
+            const handleClearConfig = () => { localStorage.removeItem(STORAGE_KEY_FIREBASE_CONFIG); setIsCloudConnected(false); setUser(null); };  
+            const handleExportBackup = () => { const blob = new Blob([JSON.stringify({ data, files: importedFiles })], {type: "application/json"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup.json`; document.body.appendChild(a); a.click(); };  
+            const handleRestoreBackup = (e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const b = JSON.parse(ev.target.result); if(b.data) { setData(b.data); setImportedFiles(b.files||[]); alert("Restored!"); setShowCloudSettings(false); } } catch(err){alert("Invalid");} }; reader.readAsText(file); e.target.value=''; };  
+            const handleSaveConfig = () => { let config = { apiKey: apiKeyInput.trim(), authDomain: `${projectIdInput.trim()}.firebaseapp.com`, projectId: projectIdInput.trim() }; if(initFirebase(config)) { localStorage.setItem(STORAGE_KEY_FIREBASE_CONFIG, JSON.stringify(config)); setIsCloudConnected(true); alert("Connected!"); } else alert("Failed"); };  
+            const toggleFileSelection = (id) => { const newSet = new Set(selectedFileIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFileIds(newSet); };  
+            const toggleAllFiles = () => { if (selectedFileIds.size === importedFiles.length) setSelectedFileIds(new Set()); else setSelectedFileIds(new Set(importedFiles.map(f => f.id))); };  
+            const confirmDeleteFile = () => {};   
+  
+            return (  
+                <div className="min-h-screen bg-[#0f0f11] text-gray-200 font-sans flex flex-col p-4 md:p-6 gap-6">  
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv"/>  
+                    <input type="file" ref={photoInputRef} onChange={handlePhotoChange} className="hidden" accept="image/*"/>  
+                    <input type="file" ref={backupInputRef} onChange={handleRestoreBackup} className="hidden" accept=".json"/>  
+                    <input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="hidden" accept="image/*" />  
+  
+                    {/* HEADER */}  
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-[#18181b] p-4 rounded-3xl border border-gray-800 shadow-xl">  
+                        <div className="flex items-center gap-4">  
+                             <div className="w-12 h-12 rounded-2xl overflow-hidden bg-gray-800 flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-[#ccff00] transition-all" onClick={() => logoInputRef.current.click()}>  
+                                 {appLogo ? <img src={appLogo} className="w-full h-full object-cover" /> : <IconWrapper name="image" size={24} className="text-gray-500"/>}  
+                             </div>  
+                             <div>  
+                                 <h1 className="text-2xl font-bold text-white tracking-tight">Unplanned CIP <span className="text-[#ccff00]">Tracker</span></h1>  
+                                 <p className="text-xs text-gray-500 flex items-center gap-1">  
+                                     {isCloudConnected ? <span className="text-green-500">● Synced</span> : <span className="text-gray-500">● Local</span>}  
+                                 </p>  
+                             </div>  
+                        </div>  
+                        <div className="flex gap-3 items-center">  
+                            <button onClick={handleGoogleLogin} className="flex items-center gap-2 bg-[#1e1e24] text-gray-300 px-4 py-2 rounded-xl text-xs font-bold hover:text-white hover:bg-[#2a2a30] border border-gray-700 shadow-lg">  
+                                <IconWrapper name="chrome" size={16}/> Login / Sync  
+                            </button>  
+                            <div className="h-6 w-px bg-gray-700 mx-1"></div>  
+                            <div className="flex bg-black/40 p-1 rounded-full border border-gray-800">  
+                                 <NavTab label="Overview" isActive={currentView === 'Overview'} onClick={() => setCurrentView('Overview')} />  
+                                 <NavTab label="Manage Files" isActive={currentView === 'Data'} onClick={() => setShowImportManager(true)} />  
+                            </div>  
+                        </div>  
+                    </div>  
+  
+                    {/* FILTERS BAR */}  
+                    <div className="flex flex-col xl:flex-row gap-4 justify-between">  
+                         <div className="flex gap-3">  
+                             <FilterDropdown label="Line" value={activeTab} options={LINES} onChange={setActiveTab} iconName="layout-dashboard"/>  
+                             <FilterDropdown label="Shift" value={activeShift} options={SHIFTS} onChange={setActiveShift} iconName="clock"/>  
+                             <FilterDropdown label="Product" value={activeProduct} options={PRODUCTS} onChange={setActiveProduct} iconName="package"/>  
+                         </div>  
+                         <div className="flex gap-3 items-center bg-[#18181b] p-1.5 rounded-2xl border border-gray-800">  
+                              <div className="px-3 text-gray-500"><IconWrapper name="calendar" size={16}/></div>  
+                              <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-transparent text-white text-xs font-mono outline-none w-24"/>  
+                              <span className="text-gray-600">-</span>  
+                              <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-transparent text-white text-xs font-mono outline-none w-24"/>  
+                         </div>  
+                    </div>  
+  
+                    {/* DASHBOARD GRID */}  
+                    <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 min-h-0">  
+                        <div className="xl:col-span-1 flex flex-col gap-6">  
+                            <Card title="Total Impact" iconName="dollar-sign" className="bg-gradient-to-br from-[#1e1e24] to-[#18181b] justify-center min-h-[150px]">  
+                                 <h2 className="text-4xl font-bold text-white mb-2">{formatCurrency(metrics.totalCost)}</h2>  
+                                 <div className="flex items-center gap-2 text-xs text-gray-400"><span className="px-2 py-1 bg-red-500/20 text-red-400 rounded font-bold">LOSS</span><span>in period</span></div>  
+                            </Card>  
+                            <Card title="Efficiency Drag" iconName="clock">  
+                                <div className="flex justify-between items-end mb-2">  
+                                    <div><h3 className="text-2xl font-bold text-white">{metrics.totalDuration.toFixed(1)}h</h3></div>  
+                                    <div className="text-right"><h3 className="text-2xl font-bold text-white">{formatNumber(metrics.totalPacks)}</h3><p className="text-[10px] text-gray-500">Units</p></div>  
+                                </div>  
+                                <div className="w-full bg-gray-800 h-1 rounded-full"><div className="bg-[#ccff00] h-full rounded-full" style={{width: '65%'}}></div></div>  
+                            </Card>  
+                            <Card title="Top Financial Losses (Aggregated)" iconName="alert-triangle" className="flex-1 min-h-[300px]">  
+                                <div className="space-y-2 overflow-y-auto max-h-full custom-scrollbar pr-2">  
+                                    {(highImpactAggregated || []).map((item, i) => (  
+                                        <div key={i} className="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors">  
+                                            <div>  
+                                                <p className="text-xs font-bold text-white break-words whitespace-normal max-w-[180px]" title={item.reason}>{item.reason}</p>  
+                                                <p className="text-[10px] text-gray-500">{item.count} events</p>  
+                                            </div>  
+                                            <div className="text-right">  
+                                                <p className="text-xs font-mono font-bold text-red-400">{formatCurrency(item.cost)}</p>  
+                                            </div>  
+                                        </div>  
+                                    ))}  
+                                </div>  
+                            </Card>  
+                        </div>  
+  
+                        <div className="xl:col-span-3 grid grid-rows-[auto_1fr] gap-6">  
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[450px]">  
+                                <Card title="Max Single Event Loss (Per Month)" iconName="bar-chart-3" className="h-full overflow-hidden">  
+                                    <ResponsiveContainer width="100%" height="100%">  
+                                        <BarChart data={monthlyMaxLoss} margin={{top: 30, right: 20, left: 0, bottom: 0}}>  
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)"/>  
+                                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill:'#525252', fontSize:10}} dy={10}/>  
+                                            <Tooltip   
+                                                cursor={{fill:'rgba(255,255,255,0.05)'}}  
+                                                contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}  
+                                                formatter={(v, n, props) => [formatCurrency(v), props.payload.reason]}  
+                                            />  
+                                            <Bar dataKey="cost" radius={[4,4,0,0]}>  
+                                                {monthlyMaxLoss?.map((e, i) => <Cell key={i} fill={MONTH_COLORS[i % 12]} />)}  
+                                                <LabelList dataKey="cost" position="top" formatter={(v) => v > 0 ? `$${(v/1000).toFixed(0)}k` : ''} fill="#ffffff" fontSize={10} fontWeight="bold" />  
+                                            </Bar>  
+                                        </BarChart>  
+                                    </ResponsiveContainer>  
+                                </Card>  
+  
+                                <Card   
+                                    title={`Event Log (${filteredData.length})`}   
+                                    iconName="list"   
+                                    className="h-full overflow-hidden"  
+                                    action={eventLogSelection.size > 1 && <button onClick={handleMergeEvents} className="px-3 py-1 bg-[#ccff00] text-black rounded-lg text-xs font-bold hover:bg-[#b3e600]">Merge ({eventLogSelection.size})</button>}  
+                                >  
+                                    <div className="h-full flex flex-col">  
+                                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">  
+                                            <table className="w-full text-left text-sm border-separate border-spacing-y-1">  
+                                                <thead className="sticky top-0 bg-[#1e1e24] z-10 text-xs text-gray-500 uppercase font-bold">  
+                                                    <tr>  
+                                                        <th className="w-8 text-center cursor-pointer" onClick={toggleAllEvents}>  
+                                                            {eventLogSelection.size > 0 ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14}/>}  
+                                                        </th>  
+                                                        <th>Date / Line</th>  
+                                                        <th>Reason</th>  
+                                                        <th>Product</th>  
+                                                        <th>Shift</th>  
+                                                        <th className="text-right">Cost</th>  
+                                                    </tr>  
+                                                </thead>  
+                                                <tbody className="text-gray-300 text-xs">  
+                                                    {paginatedData.map(item => (  
+                                                        <tr key={item.id} onClick={(e)=>{ if(!e.target.closest('.checkbox')) setSelectedEvent(item) }} className={`group hover:bg-white/5 cursor-pointer ${eventLogSelection.has(item.id) ? 'bg-white/10' : ''}`}>  
+                                                            <td className="p-2 rounded-l-lg checkbox text-center" onClick={(e)=>{ e.stopPropagation(); toggleEventSelection(item.id); }}>  
+                                                                {eventLogSelection.has(item.id) ? <IconWrapper name="check-square" size={14} className="text-[#ccff00]"/> : <IconWrapper name="square" size={14} className="text-gray-600"/>}  
+                                                            </td>  
+                                                            <td className="p-2"><div>{formatDate(item.date)}</div><div className="text-[10px] font-bold text-[#ccff00]">{item.line}</div></td>  
+                                                            <td className="p-2 truncate max-w-[100px] font-medium text-white" title={item.reason}>{item.reason}</td>  
+                                                            <td className="p-2 truncate max-w-[80px] text-blue-300">{item.product || '-'}</td>  
+                                                            <td className="p-2 text-gray-500">{item.shift}</td>  
+                                                            <td className="p-2 rounded-r-lg text-right font-mono">{formatCurrency(parseFloat(item.duration)*LINE_CONFIG[item.line].costPerHr)}</td>  
+                                                        </tr>  
+                                                    ))}  
+                                                </tbody>  
+                                            </table>  
+                                        </div>  
+                                        {/* Pagination */}  
+                                        <div className="pt-2 border-t border-white/5 flex justify-between items-center text-xs text-gray-500">  
+                                            <span>Showing {logPage * ROWS_PER_PAGE + 1} - {Math.min((logPage + 1) * ROWS_PER_PAGE, filteredData.length)} of {filteredData.length}</span>  
+                                            <div className="flex gap-2">  
+                                                <button disabled={logPage === 0} onClick={() => setLogPage(p => p - 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Prev</button>  
+                                                <button disabled={(logPage + 1) * ROWS_PER_PAGE >= filteredData.length} onClick={() => setLogPage(p => p + 1)} className="px-2 py-1 bg-white/5 rounded hover:bg-white/10 disabled:opacity-50">Next</button>  
+                                            </div>  
+                                        </div>  
+                                    </div>  
+                                </Card>  
+                            </div>  
+  
+                            <Card title="Cost Velocity (Trend)" iconName="trending-up" className="h-80 w-full overflow-hidden">  
+                                 <div className="w-full h-full flex overflow-x-auto custom-scrollbar pb-2">  
+                                     {(trendData || []).map((yearGroup) => (  
+                                         <div key={yearGroup.year} className="flex-1 min-w-[200px] h-full flex flex-col border-r border-white/5 last:border-0 px-2">  
+                                             <div className="text-center text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-widest">{yearGroup.year}</div>  
+                                             <div className="flex-1 relative">  
+                                                 <ResponsiveContainer width="100%" height="100%">  
+                                                     <BarChart data={yearGroup.data} margin={{top: 30, right: 5, left: 5, bottom: 0}}>  
+                                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)"/>  
+                                                         <XAxis dataKey="name" interval={0} axisLine={false} tickLine={false} tick={{fill:'#525252', fontSize:10, angle:-90, textAnchor:'end'}} height={40} dy={0}/>  
+                                                         <Tooltip   
+                                                             cursor={{fill:'rgba(255,255,255,0.05)'}}  
+                                                             contentStyle={{backgroundColor:'#18181b', borderColor:'#333', color:'#fff', borderRadius:'8px'}}  
+                                                             formatter={v => [formatCurrency(v), 'Cost']}  
+                                                         />  
+                                                         <Bar dataKey="cost" radius={[4,4,0,0]}>  
+                                                             {(yearGroup.data || []).map((e, i) => <Cell key={i} fill={MONTH_COLORS[i % 12]} />)}  
+                                                             <LabelList dataKey="cost" position="top" formatter={(v) => v > 0 ? `$${(v/1000).toFixed(0)}k` : ''} fill="#9ca3af" fontSize={9} />  
+                                                         </Bar>  
+                                                     </BarChart>  
+                                                 </ResponsiveContainer>  
+                                             </div>  
+                                         </div>  
+                                     ))}  
+                                 </div>  
+                            </Card>  
+  
+                        </div>  
+                    </div>  
+                      
+                    {showCloudSettings && <Modal isOpen={showCloudSettings} onClose={() => setShowCloudSettings(false)} title="Settings"><div className="text-gray-400 text-sm text-center">Settings panel content...</div><div className="pt-4 text-center"><button onClick={handleClearConfig} className="text-xs text-red-500 hover:text-red-400 underline">Reset Cloud</button></div></Modal>}  
+                      
+                    {/* EVENT DETAILS - With Updated Time Display */}  
+                    {selectedEvent && (  
+                        <Modal isOpen={!!selectedEvent} onClose={() => setSelectedEvent(null)} title="Event Details">  
+                             <div className="grid grid-cols-2 gap-4 text-sm text-gray-300 mb-4">  
+                                <div className="col-span-1 bg-red-500/10 border border-red-500/30 p-3 rounded-lg">  
+                                    <span className="block text-xs text-red-400 font-bold uppercase">Financial Loss</span>  
+                                    <span className="text-lg font-mono text-red-500">{formatCurrency(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].costPerHr)}</span>  
+                                </div>  
+                                <div className="col-span-1 bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg">  
+                                    <span className="block text-xs text-orange-400 font-bold uppercase">Packs Lost</span>  
+                                    <span className="text-lg font-mono text-orange-500">{formatNumber(parseFloat(selectedEvent.duration)*LINE_CONFIG[selectedEvent.line].packsPerHr)}</span>  
+                                </div>  
+  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Line</span>{selectedEvent.line}</div>  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Date</span>{formatDate(selectedEvent.date)}</div>  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Start Time</span>{formatTime(selectedEvent.startTime)}</div>  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">End Time</span>{formatTime(selectedEvent.endTime)}</div>  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Shift</span>{selectedEvent.shift}</div>  
+                                <div className="bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Duration</span>{selectedEvent.duration}h</div>  
+                                <div className="col-span-2 bg-black/30 p-3 rounded-lg"><span className="block text-xs text-gray-500">Reason</span>{selectedEvent.reason}</div>  
+                                <div className="col-span-2 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30"><span className="block text-xs text-blue-400">Product</span>{selectedEvent.product}</div>  
+                             </div>  
+                               
+                             <div className="mb-4">  
+                                <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Operator Notes</label>  
+                                <textarea   
+                                    className="w-full h-32 bg-[#09090b] border border-gray-700 rounded-xl p-3 text-gray-200 text-sm focus:border-[#ccff00] outline-none"   
+                                    placeholder="Add details here..."  
+                                    value={selectedEvent.notes || ''}   
+                                    onChange={e => handleAddNote(selectedEvent.id, e.target.value)}   
+                                />  
+                             </div>  
+                               
+                             <div>  
+                                <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Evidence</label>  
+                                <div className="aspect-video w-full bg-gray-800 rounded-2xl overflow-hidden mb-4 flex items-center justify-center border border-gray-700 relative group shadow-inner">  
+                                    {selectedImage ? (  
+                                        <>  
+                                            <img src={selectedImage} alt="Selected" className="w-full h-full object-contain" />  
+                                            <button onClick={() => handleDeletePhoto(selectedEvent.id, selectedImage)} className="absolute top-3 right-3 p-2 bg-black/50 backdrop-blur-sm rounded-full text-gray-300 hover:text-red-500 hover:bg-black/80 transition-all shadow-sm"><IconWrapper name="trash-2" size={16} /></button>  
+                                        </>  
+                                    ) : (  
+                                        <div className="flex flex-col items-center gap-2 text-gray-500"><IconWrapper name="image" size={32} /><span className="text-xs font-medium">No image selected</span></div>  
+                                    )}  
+                                </div>  
+                                <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">  
+                                    <button onClick={handleAddPhotoClick} className="w-16 h-16 flex-shrink-0 bg-[#18181b] border border-gray-700 rounded-xl flex flex-col items-center justify-center text-gray-500 hover:bg-gray-800 hover:text-[#ccff00] hover:border-[#ccff00] transition-all shadow-sm"><IconWrapper name="camera" size={20} /></button>  
+                                    {(selectedEvent.photos || []).map((photoUrl, i) => (  
+                                        <div key={i} onClick={() => setSelectedImage(photoUrl)} className={`w-16 h-16 flex-shrink-0 rounded-xl overflow-hidden border-2 cursor-pointer transition-all shadow-sm ${selectedImage === photoUrl ? 'border-[#ccff00] ring-2 ring-[#ccff00]/20' : 'border-transparent hover:border-gray-600'}`}>  
+                                            <img src={photoUrl} alt={`Thumbnail ${i}`} className="w-full h-full object-cover" />  
+                                        </div>  
+                                    ))}  
+                                </div>  
+                            </div>  
+                        </Modal>  
+                    )}  
+  
+                    {showImportManager && (  
+                        <Modal isOpen={showImportManager} onClose={() => setShowImportManager(false)} title="Import Manager">  
+                            {deleteStep === 'confirm' && (  
+                                <div className="mb-6 bg-red-50 p-4 rounded-xl border border-red-100 text-center">  
+                                    <h3 className="text-lg font-bold text-red-900">Confirm Deletion</h3>  
+                                    <div className="flex justify-center gap-3 mt-4"><button onClick={()=>setDeleteStep('idle')} className="px-4 py-2 text-gray-600 font-medium text-sm hover:bg-gray-200 rounded-lg">Cancel</button><button onClick={confirmMultiDelete} className="px-4 py-2 bg-red-600 text-white font-bold text-sm rounded-lg hover:bg-red-700">Delete</button></div>  
+                                </div>  
+                            )}  
+                            <div className="flex justify-end gap-3 mb-6">  
+                                <button onClick={() => setShowPasteInput(!showPasteInput)} className="flex items-center gap-2 bg-white/10 text-white border border-white/10 px-3 py-2 rounded-lg text-xs font-bold hover:bg-white/20 transition-colors"><IconWrapper name="clipboard" size={14}/> Paste</button>  
+                                <button onClick={handleUploadNewClick} className="flex items-center gap-2 bg-[#ccff00] text-black px-3 py-2 rounded-lg text-xs font-bold hover:bg-[#b3e600] transition-colors"><IconWrapper name="plus" size={14}/> Upload</button>  
+                            </div>  
+                            {showPasteInput && <div className="mb-6"><textarea value={pastedData} onChange={e=>setPastedData(e.target.value)} className="w-full h-32 p-3 text-xs font-mono bg-[#09090b] border border-gray-700 text-gray-300 rounded-lg mb-3 outline-none focus:border-[#ccff00]" placeholder="Paste rows here..."/><button onClick={handlePasteProcess} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm w-full">Analyze</button></div>}  
+                            <div className="border border-gray-700 rounded-xl overflow-hidden max-h-96 overflow-y-auto custom-scrollbar">  
+                                <table className="w-full text-sm text-left text-gray-300">  
+                                    <thead className="bg-[#27272a] text-gray-200 font-bold sticky top-0 z-10">  
+                                        <tr>  
+                                            <th className="w-10 text-center py-3 cursor-pointer hover:bg-white/5" onClick={toggleAllFiles}>  
+                                                {importedFiles.length > 0 && selectedFileIds.size === importedFiles.length ? <IconWrapper name="check-square" size={16} className="text-[#ccff00]"/> : <IconWrapper name="square" size={16}/>}  
+                                            </th>  
+                                            <th className="px-4 py-3">File</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Records</th>  
+                                        </tr>  
+                                    </thead>  
+                                    <tbody className="divide-y divide-gray-800">  
+                                        {(importedFiles || []).map(f => (  
+                                            <tr key={f.id} className={`hover:bg-white/5 ${selectedFileIds.has(f.id) ? 'bg-blue-500/10' : ''}`}>  
+                                                <td className="text-center py-3 cursor-pointer" onClick={() => toggleFileSelection(f.id)}>  
+                                                    {selectedFileIds.has(f.id) ? <IconWrapper name="check-square" size={16} className="text-[#ccff00]"/> : <IconWrapper name="square" size={16} className="text-gray-600"/>}  
+                                                </td>  
+                                                <td className="px-4 py-3 font-bold text-white">{f.name}</td>  
+                                                <td className="px-4 py-3 text-xs text-gray-500">{f.date}</td>  
+                                                <td className="px-4 py-3 text-xs">{f.recordCount}</td>  
+                                            </tr>  
+                                        ))}  
+                                    </tbody>  
+                                </table>  
+                            </div>  
+                            {selectedFileIds.size > 0 && <div className="mt-4 text-right"><button onClick={initiateMultiDelete} className="text-xs text-red-500 hover:text-red-400 underline">Delete Selected</button></div>}  
+                        </Modal>  
+                    )}  
+                      
+                </div>  
+            );  
+        }  
+  
+        const root = ReactDOM.createRoot(document.getElementById('root'));  
+        root.render(<UnplannedCIPTracker />);  
+    </script>  
+</body>  
+</html>  
