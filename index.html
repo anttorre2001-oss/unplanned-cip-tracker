@@ -332,6 +332,24 @@
                 return () => { unsubEvents(); unsubFiles(); };
             }, [user, isCloudConnected]);
 
+            // 1. Load from LocalStorage on Startup if not cloud
+            useEffect(() => {
+                if (!isCloudConnected) {
+                    const localData = localStorage.getItem(STORAGE_KEY_DATA);
+                    const localFiles = localStorage.getItem(STORAGE_KEY_FILES);
+                    if (localData) setData(JSON.parse(localData));
+                    if (localFiles) setImportedFiles(JSON.parse(localFiles));
+                }
+            }, [isCloudConnected]);
+
+            // 2. Save to LocalStorage whenever data changes (if not cloud)
+            useEffect(() => {
+                if (!isCloudConnected) {
+                    localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(data));
+                    localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(importedFiles));
+                }
+            }, [data, importedFiles, isCloudConnected]);
+
             const PRODUCTS = useMemo(() => {
                 const s = new Set(data.map(d => d.product).filter(Boolean));
                 return ['All Products', ...Array.from(s).sort()];
@@ -442,7 +460,7 @@
             // Handlers
             const handleFileChange = (e) => { if(e.target.files[0]){ const r=new FileReader(); r.onload=(ev)=>processImport(e.target.files[0].name, ev.target.result); r.readAsText(e.target.files[0]); e.target.value=''; } };
             
-            // UPDATED IMPORT LOGIC - STRICT START/END CALCULATION
+            // UPDATED IMPORT LOGIC
             const processImport = async (name, txt) => {
                 setIsImporting(true); setImportProgress(0); setShowImportManager(false); setImportStep('Reading...');
                 try {
@@ -460,7 +478,6 @@
                         date: headers.findIndex(h=>h.includes('createddate')),
                         // STRICT MINUTE DETECTION
                         mins: headers.findIndex(h=>h.includes('sumofminutes') || h.includes('minuteslost')),
-                        // Only use hours as fallback for cost calc
                         hrs: headers.findIndex(h=>h.includes('sumofhours')||h.includes('hours')),
                         prob: headers.findIndex(h=>h.includes('problemtype')||h.includes('reason')),
                         run: headers.findIndex(h=>h.includes('runname')),
@@ -480,7 +497,7 @@
                         const createdDateStr = c[colMap.date]; 
                         let startDateObj = new Date(createdDateStr);
                         
-                        // DURATION in Minutes (Primary Source)
+                        // DURATION in Minutes
                         let durationMinutes = 0;
                         if(colMap.mins > -1 && c[colMap.mins]) {
                             durationMinutes = parseFloat(c[colMap.mins]) || 0;
@@ -499,7 +516,7 @@
                         parsed.push({
                             sourceFileId: fileId, 
                             line: detectLine(c[colMap.loc]), 
-                            date: !isNaN(startDateObj.getTime()) ? startDateObj.toISOString() : new Date().toISOString(), // Base date
+                            date: !isNaN(startDateObj.getTime()) ? startDateObj.toISOString() : new Date().toISOString(),
                             startTime: !isNaN(startDateObj.getTime()) ? startDateObj.toISOString() : 'N/A',
                             endTime: endDateObj ? endDateObj.toISOString() : 'N/A',     
                             duration: durationHours, 
@@ -511,7 +528,9 @@
                     }
                     
                     const meta={id:fileId, name, date:new Date().toLocaleDateString(), recordCount:parsed.length};
+                    
                     if(isCloudConnected && user) {
+                        // Cloud Save
                         const b=db.batch(); await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files').doc(fileId).set(meta);
                         const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
                         const BATCH_SIZE = 50;
@@ -520,8 +539,15 @@
                             await Promise.all(chunk.map(e => eventsRef.add(JSON.parse(JSON.stringify(e)))));
                         }
                     } else {
+                        // Local Save - Immediate
                         const ids=parsed.map((e,i)=>({...e, id:(Date.now()+i).toString()}));
-                        setData(prev=>[...ids, ...prev]); setImportedFiles(prev=>[meta, ...prev]);
+                        const newData = [...ids, ...data];
+                        const newFiles = [meta, ...importedFiles];
+                        setData(newData); 
+                        setImportedFiles(newFiles);
+                        // Force sync for immediate deletion safety
+                        localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(newData));
+                        localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(newFiles));
                     }
                     setImportStep('Done!'); setTimeout(() => { setIsImporting(false); setShowImportManager(true); }, 500);
                 } catch(e) { alert(e.message); setIsImporting(false); }
@@ -556,10 +582,13 @@
                     await batch.commit();
                 } else {
                     const remaining = data.filter(e => !eventLogSelection.has(e.id));
-                    setData([mergedEvent, ...remaining]);
+                    const newData = [mergedEvent, ...remaining];
+                    setData(newData);
+                    localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(newData)); // Force Save
                 }
                 setEventLogSelection(new Set());
             };
+
             const toggleEventSelection = (id) => { const n = new Set(eventLogSelection); if(n.has(id)) n.delete(id); else n.add(id); setEventLogSelection(n); };
             const toggleAllEvents = () => { if(eventLogSelection.size === filteredData.length) setEventLogSelection(new Set()); else setEventLogSelection(new Set(filteredData.map(d=>d.id))); };
             const handleUploadNewClick = () => fileInputRef.current.click();
@@ -570,7 +599,39 @@
             const handleAddPhotoClick = () => photoInputRef.current.click();
             const handlePhotoChange = (event) => { if (!selectedEvent) return; const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = async () => { const newPhotoUrl = reader.result; const updatedPhotos = [...(selectedEvent.photos || []), newPhotoUrl]; const newData = data.map(item => item.id === selectedEvent.id ? { ...item, photos: updatedPhotos } : item); setData(newData); setSelectedEvent(prev => ({ ...prev, photos: updatedPhotos })); if(updatedPhotos.length === 1) setSelectedImage(newPhotoUrl); if (isCloudConnected && user) { await db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events').doc(selectedEvent.id).update({ photos: updatedPhotos }); } }; reader.readAsDataURL(file); event.target.value = ''; };
             const initiateMultiDelete = () => { if (selectedFileIds.size === 0) return; setDeleteStep('confirm'); };
-            const confirmMultiDelete = async () => { setIsDeleting(true); setTimeout(() => { setData(prev=>prev.filter(i=>!selectedFileIds.has(i.sourceFileId))); setImportedFiles(prev=>prev.filter(f=>!selectedFileIds.has(f.id))); setIsDeleting(false); setDeleteStep('idle'); setSelectedFileIds(new Set()); }, 1000); };
+            
+            // Updated Delete Logic - NO DELAY, IMMEDIATE SAVE
+            const confirmMultiDelete = async () => { 
+                setIsDeleting(true);
+                const targets = [...selectedFileIds];
+                
+                if(isCloudConnected && user) {
+                     const eventsRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('events');
+                     const filesRef = db.collection('artifacts').doc(GLOBAL_APP_ID).collection('users').doc(user.uid).collection('files');
+                     for(const fid of targets) {
+                         const snaps = await eventsRef.where('sourceFileId', '==', fid).get();
+                         const batch = db.batch();
+                         snaps.forEach(doc => batch.delete(doc.ref));
+                         await batch.commit();
+                         await filesRef.doc(fid).delete();
+                     }
+                } else {
+                     // Local Storage Delete - Calculated then Set
+                     const newData = data.filter(i => !selectedFileIds.has(i.sourceFileId));
+                     const newFiles = importedFiles.filter(f => !selectedFileIds.has(f.id));
+                     
+                     setData(newData);
+                     setImportedFiles(newFiles);
+                     
+                     localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(newData));
+                     localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(newFiles));
+                }
+                
+                setIsDeleting(false); 
+                setDeleteStep('idle'); 
+                setSelectedFileIds(new Set()); 
+            };
+
             const handleGoogleLogin = async () => { if(window.location.protocol === 'file:') { alert("Use localhost or https."); return; } try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); setShowCloudSettings(false); } catch(e) { alert(e.message); } };
             const handleLogout = async () => { await auth.signOut(); };
             const handleClearConfig = () => { localStorage.removeItem(STORAGE_KEY_FIREBASE_CONFIG); setIsCloudConnected(false); setUser(null); };
